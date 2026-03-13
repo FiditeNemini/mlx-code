@@ -1,488 +1,506 @@
-#!/usr/bin/env python3
-"""mlx-code: local Claude Code-style agent via mlx-lm."""
-from __future__ import annotations
-import argparse, json, re, subprocess, sys, textwrap
+import argparse
+import json
+import os
+import re
+import time
+import uuid
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 try:
-    from mlx_lm import load, stream_generate
+    import yaml
 except ImportError:
-    sys.exit("mlx-lm not found.  Run: pip install mlx-lm")
+    yaml = None
 
-FILES = {
+DEFAULT_MODEL      = "mlx-community/Qwen3.5-4B-OptiQ-4bit"
+DEFAULT_SKILL_DIRS = ["./skills", os.path.expanduser("~/.claude/skills")]
+LOG_PROMPT_TAIL    = 1000   
 
-"~/.claude/CLAUDE.md": """## Project
-mlx-code — local Claude Code-style agent via mlx-lm on Apple Silicon.
-
-## Stack
-Python 3.11+, mlx-lm, no other runtime deps.
-
-## Commands
-- mlx-code                       run agent in current directory
-- mlx-code --dir ~/project       specify project directory
-- mlx-code --model <hf-id>       use a different model
-- python main.py                 run without installing
-
-## Conventions
-- Type hints on all function signatures
-- grep before cat — never read whole files speculatively
-- Functions under 40 lines
-- f-strings, not .format()
-
-## Adding skills
-Drop a SKILL.md into ~/.claude/skills/<n>/SKILL.md
-Or ask mlx-code to create one for you.
-description field drives auto-activation — make it keyword-rich.
-disable-model-invocation: true for sensitive skills (deploy etc).
-""",
-
-"~/.claude/skills/code-search/SKILL.md": """---
-name: code-search
-description: Search and explore a codebase to understand how it works, find functions, trace data flow, or read code. Use when asked to explain, understand, find, read, or explore code.
----
-
-## Rules
-- ALWAYS grep before reading. Never cat a whole file without knowing its size.
-- Check line count with `wc -l` before reading anything.
-- Read specific ranges with `cat -n file.py | sed -n 'A,Bp'`.
-
-## Workflow
-
-### Find relevant code first
-```
-grep -n "def agent_loop" main.py
-grep -rn "class Trainer" src/
-grep -n "import" main.py | head -20
-```
-
-### Then read only that section
-```
-grep -n "def agent_loop" main.py        # shows line 230
-cat -n main.py | sed -n '230,280p'      # read just those lines
-```
-
-### Map a large file before diving in
-```
-wc -l bigfile.py
-grep -n "^class\\|^def " bigfile.py | head -40
-```
-
-### Trace data flow
-```
-grep -rn "history" main.py
-grep -n "def.*history\\|history.*=" main.py
-```
-
-## Output format
-1. What the code does in 1-2 sentences
-2. Key data structures
-3. Execution flow step by step
-4. Any gotchas
-""",
-
-"~/.claude/skills/python-debug/SKILL.md": """---
-name: python-debug
-description: Debug Python errors, tracebacks, exceptions, crashes, and unexpected behaviour. Use when the user mentions an error, traceback, crash, bug, or asks why something is broken.
----
-
-## Workflow
-1. Read the traceback — bottom line is the error, last frame in YOUR code is relevant
-2. Jump to the line: `grep -n "fn_name" file.py` then `cat -n file.py | sed -n 'A,Bp'`
-3. Reproduce mentally — what value arrives there, why does it fail
-4. Fix minimally — no refactoring while debugging
-5. Verify: `python -m pytest tests/ -x -q` or `python script.py`
-
-## Common errors
-| Error | Cause |
-|-------|-------|
-| `AttributeError: 'NoneType'` | missing None check before .attr |
-| `KeyError` | key absent — use .get() or check with `in` |
-| `IndexError` | off-by-one or empty list |
-| `TypeError: unsupported operand` | wrong type passed |
-| `RecursionError` | missing base case |
-| `ImportError` | missing package or wrong path |
-
-## Debug commands
-```
-python -W all script.py
-git diff HEAD~1 -- file.py
-grep -n "TODO\\|FIXME\\|HACK" .
-```
-""",
-
-"~/.claude/skills/write-skill/SKILL.md": """---
-name: write-skill
-description: Create a new skill to teach the agent a reusable capability. Use when asked to add a skill, create a skill, or teach the agent to do something new.
----
-
-## Steps
-1. Choose name: lowercase hyphens, e.g. `deploy-heroku`
-2. Use write_file with path `~/.claude/skills/<n>/SKILL.md` for global,
-   or `.claude/skills/<n>/SKILL.md` for project-only
-
-## SKILL.md structure
-```
----
-name: skill-name
-description: What it does AND when to activate it. Keywords drive auto-activation.
-disable-model-invocation: true   # optional: manual /skill only
-allowed-tools: bash              # optional: restrict tools
----
-
-# Instructions
-Step by step. Under 400 lines.
-```
-
-## Verify
-```
-ls ~/.claude/skills/
-cat ~/.claude/skills/<n>/SKILL.md
-```
-The agent rescans after every turn — new skills appear immediately.
-""",
-
-}  # end FILES
+model     = None
+tokenizer = None
+model_id  = None
+skills    = {}
 
 
-def _deploy_files() -> None:
-    """Write any missing FILES to disk. Skips files that already exist."""
-    deployed = []
-    for dest_s, content in FILES.items():
-        dest = Path(dest_s).expanduser()
-        if dest.exists():
-            continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content)
-        deployed.append(str(dest))
-    if deployed:
-        print("mlx-code: installed missing files:")
-        for f in deployed: print(f"  {f}")
+def log(tag, text):
+    bar = "─" * 60
+    print(f"\n{bar}\n{tag}\n{bar}\n{text}\n", flush=True)
 
-_deploy_files()
 
-DEFAULT_MODEL  = "mlx-community/Qwen3.5-4B-OptiQ-4bit"
-MAX_TOOL_TURNS = 30
-
-R="\033[0m"; BOLD="\033[1m"; DIM="\033[2m"
-CYAN="\033[36m"; GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"
-def cp(c,t): print(f"{c}{t}{R}",flush=True)
-
-# ── CLAUDE.md ─────────────────────────────────────────────────────────────────
-
-def load_claude_md(project_dir: Path) -> str:
-    parts = []
-    for path, label in [
-        (Path.home()/".claude"/"CLAUDE.md", "~/.claude/CLAUDE.md"),
-        (project_dir/"CLAUDE.md",           "CLAUDE.md"),
-    ]:
-        if path.exists():
-            parts.append(f"<!-- {label} -->\n{path.read_text().strip()}")
-    root = project_dir/"CLAUDE.md"
-    for sub in sorted(project_dir.rglob("CLAUDE.md")):
-        if sub == root: continue
-        parts.append(f"<!-- {sub.relative_to(project_dir)} -->\n{sub.read_text().strip()}")
-    return "\n\n".join(parts)
-
-# ── Skills ────────────────────────────────────────────────────────────────────
-
-SKILL_DIRS = [Path.home()/".claude"/"skills"]
-
-def _fm(text: str) -> dict:
-    m = re.match(r"^---[ \t]*\n(.*?)\n---[ \t]*\n", text, re.DOTALL)
-    if not m: return {}
-    fm: dict = {}
-    for line in m.group(1).splitlines():
+def parse_frontmatter(text):
+    m = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
+    if not m:
+        return {}, text
+    fm_raw = m.group(1)
+    body   = text[m.end():]
+    if yaml:
+        try:
+            return yaml.safe_load(fm_raw) or {}, body
+        except Exception:
+            pass
+    fm = {}
+    for line in fm_raw.splitlines():
         if ":" in line:
-            k,_,v = line.partition(":")
-            fm[k.strip()] = v.strip().strip('"').strip("'")
-    return fm
+            k, _, v = line.partition(":")
+            fm[k.strip()] = v.strip()
+    return fm, body
 
-def discover_skills(project_dir: Path) -> list[dict]:
-    dirs = SKILL_DIRS + [project_dir/".claude"/"skills"]
-    out: list[dict] = []; seen: set[str] = set()
-    for base in dirs:
-        if not base.exists(): continue
-        for md in sorted(base.rglob("SKILL.md")):
-            text = md.read_text(errors="replace")
-            fm   = _fm(text)
-            name = (fm.get("name") or md.parent.name).strip()
-            if not name or name in seen: continue
-            seen.add(name)
-            desc = fm.get("description","").strip()
-            if not desc: continue
-            raw  = fm.get("allowed-tools","")
-            out.append({
-                "name":    name,
-                "desc":    desc,
-                "path":    md,
-                "allowed": {t.strip() for t in raw.split(",")} if raw else None,
-                "no_auto": fm.get("disable-model-invocation","false").lower() in ("true","1","yes"),
-                "no_user": fm.get("user-invocable","true").lower() in ("false","0","no"),
-            })
-    return out
+def scan_skills(dirs):
+    found = {}
+    for d in dirs:
+        p = Path(d)
+        if not p.exists():
+            continue
+        for f in p.rglob("SKILL.md"):
+            try:
+                text = f.read_text()
+                fm, _ = parse_frontmatter(text)
+                name, desc = fm.get("name"), fm.get("description")
+                if name and desc:
+                    found[name] = {"description": desc, "path": str(f)}
+                    print(f"  skill: {name}", flush=True)
+            except Exception as e:
+                print(f"  warn: {f}: {e}", flush=True)
+    return found
 
-# ── Prompt ────────────────────────────────────────────────────────────────────
+def skill_body(name):
+    if name not in skills:
+        return f"Unknown skill '{name}'. Available: {', '.join(skills) or 'none'}"
+    try:
+        return Path(skills[name]["path"]).read_text()
+    except Exception as e:
+        return f"Error reading skill: {e}"
 
-CORE = """\
-━━━ TOOLS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Call tools with a JSON object on its own line:
 
-{"tool": "bash", "args": {"cmd": "..."}}
-{"tool": "write_file", "args": {"path": "...", "content": "..."}}
+def load_model(path):
+    global model, tokenizer, model_id
+    from mlx_lm import load
+    print(f"Loading {path} …", flush=True)
+    model, tokenizer = load(path)
+    model_id = path
+    print("Ready.\n", flush=True)
 
-bash  cwd=project root, 30s timeout
-  ALWAYS grep/find before cat:
-    grep -n "def foo" main.py
-    grep -rn "pattern" src/
-    cat -n file.py | sed -n '40,80p'
-    wc -l file.py
-  Run:    python -m pytest tests/ -x
-  Update: printf '\\n## Rule\\n- text\\n' >> CLAUDE.md
-
-write_file  path relative to project root, content = full file text\
-"""
-
-def skill_tools(skills: list[dict]) -> str:
-    auto = [s for s in skills if not s["no_auto"]]
-    if not auto: return "\n(no skills installed)"
-    lines = ["\n━━━ SKILLS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-             "Call a skill tool to load its full instructions into context:\n"]
-    for s in auto:
-        lines.append(f'{{"tool":"activate_skill_{s["name"]}","args":{{"reason":"..."}}}}\n  → {s["desc"]}')
-    return "\n".join(lines)
-
-def sys_prompt(cwd: Path, claude_md: str, skills: list[dict]) -> str:
-    return (
-        f"You are mlx-code, a local AI coding assistant (mlx-lm, Apple Silicon).\n"
-        f"Explore before writing. Persist knowledge to files.\n\n"
-        f"PROJECT: {cwd}\n\n"
-        f"━━━ CLAUDE.md ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{claude_md.strip() or '(none)'}\n\n"
-        + CORE + skill_tools(skills)
+def generate(prompt, max_tokens, temp, top_p):
+    from mlx_lm import generate as mlx_gen
+    return mlx_gen(
+        model, tokenizer,
+        prompt=prompt,
+        max_tokens=max_tokens,
+        verbose=False,
     )
 
-# ── Tools ─────────────────────────────────────────────────────────────────────
 
-def run_bash(cmd: str, cwd: Path) -> str:
-    if not cmd.strip(): return "ERROR: empty cmd"
+READ_SKILL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "read_skill",
+        "description": (
+            "Read the full SKILL.md for a skill before using it. "
+            "Call this whenever a task matches a skill description."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Skill name from available_skills"}
+            },
+            "required": ["name"],
+        },
+    },
+}
+
+def skills_system_addon():
+    if not skills:
+        return ""
+    entries = "\n".join(
+        f"<skill><name>{n}</name><description>{s['description']}</description></skill>"
+        for n, s in skills.items()
+    )
+    return (
+        "\n\n<available_skills>\n" + entries +
+        "\nUse the read_skill tool to get full instructions before attempting "
+        "any task that matches a skill.\n</available_skills>"
+    )
+
+def tools_to_text(tools):
+    header = (
+        "You have access to these tools. "
+        "To call a tool output ONLY a <tool_call> block:\n"
+        "<tool_call>\n<function=ToolName>\n<parameter=key>value</parameter>\n</function>\n</tool_call>"
+    )
+    lines = [header]
+    for t in tools:
+        name   = t.get("name", "")
+        desc   = t.get("description", "")
+        schema = t.get("input_schema", {})
+        params = ", ".join(schema.get("properties", {}).keys())
+        lines.append(f"- {name}({params}): {desc}")
+    return "\n".join(lines)
+
+def build_messages(body, extra=None):
+    msgs = []
+
+    sys_parts = []
+    raw = body.get("system")
+    if isinstance(raw, str) and raw:
+        sys_parts.append(raw)
+    elif isinstance(raw, list):
+        t = "\n".join(b.get("text","") for b in raw if b.get("type")=="text")
+        if t: sys_parts.append(t)
+    sys_parts.append(skills_system_addon())
+
+    if skills:
+        sys_parts.append(tools_to_text([{
+            "name": "read_skill",
+            "description": "Read the full SKILL.md instructions for a skill before using it.",
+            "input_schema": {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},
+        }]))
+
+    system = "\n".join(p for p in sys_parts if p).strip()
+    if system:
+        msgs.append({"role": "system", "content": system})
+
+    for msg in body.get("messages", []):
+        role    = msg["role"]
+        content = msg["content"]
+        if isinstance(content, str):
+            msgs.append({"role": role, "content": content})
+            continue
+        parts = []
+        for block in content:
+            t = block.get("type")
+            if t == "text":
+                parts.append(block["text"])
+            elif t == "thinking":
+                parts.append(f"<think>\n{block.get('thinking','')}\n</think>")
+            elif t == "tool_use":
+                args = "".join(
+                    f"<parameter={k}>\n{v}\n</parameter>"
+                    for k, v in block.get("input", {}).items()
+                )
+                parts.append(f"<tool_call>\n<function={block['name']}>\n{args}</function>\n</tool_call>")
+            elif t == "tool_result":
+                rc = block.get("content", "")
+                if isinstance(rc, list):
+                    rc = "\n".join(c.get("text","") for c in rc if c.get("type")=="text")
+                parts.append(f"<tool_response>\n{rc}\n</tool_response>")
+        msgs.append({"role": role, "content": "\n".join(parts)})
+
+    if extra:
+        msgs.extend(extra)
+    return msgs
+
+
+def build_prompt(body, extra=None):
+    msgs = build_messages(body, extra=extra)
+    return tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+
+
+def parse_output(raw):
+    blocks    = []
+    remaining = raw
+
+    while "<think>" in remaining and "</think>" in remaining:
+        s = remaining.index("<think>")
+        e = remaining.index("</think>")
+        before = remaining[:s].strip()
+        if before:
+            blocks.append({"type": "text", "text": before})
+        blocks.append({"type": "thinking", "thinking": remaining[s+7:e].strip()})
+        remaining = remaining[e+8:].strip()
+    remaining = remaining.replace("</think>", "").strip()
+
+    tool_blocks = []
+    leftover    = remaining
+    for m in re.finditer(r"<tool_call>(.*?)</tool_call>", remaining, re.DOTALL):
+        inner = m.group(1).strip()
+        parsed = None
+
+        try:
+            obj  = json.loads(inner)
+            name = obj.get("name") or obj.get("tool")
+            args = obj.get("arguments") or obj.get("input") or {}
+            if isinstance(args, str):
+                try:    args = json.loads(args)
+                except: args = {"raw": args}
+            if name:
+                parsed = {"name": name, "input": args}
+        except Exception:
+            pass
+
+        if not parsed:
+            fn_m = re.search(r"<function=([\w-]+)>", inner)
+            if fn_m:
+                name = fn_m.group(1)
+                args = {}
+                for pm in re.finditer(r"<parameter=([\w-]+)>\s*(.*?)\s*</parameter>", inner, re.DOTALL):
+                    args[pm.group(1)] = pm.group(2).strip()
+                parsed = {"name": name, "input": args}
+
+        if parsed:
+            tool_blocks.append({
+                "type": "tool_use",
+                "id":   f"toolu_{uuid.uuid4().hex[:8]}",
+                "name": parsed["name"],
+                "input": parsed["input"],
+            })
+        leftover = leftover.replace(m.group(0), "").strip()
+
+    if tool_blocks:
+        if leftover:
+            blocks.append({"type": "text", "text": leftover})
+        blocks.extend(tool_blocks)
+        return blocks, "tool_use"
+
+    stripped = remaining.strip()
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True,
-                           text=True, cwd=str(cwd), timeout=30)
-        out = (r.stdout+r.stderr).strip()
-        if not out: return f"(exit {r.returncode}, no output)"
-        return out[:8000]+("\n…[truncated]" if len(out)>8000 else "")
-    except subprocess.TimeoutExpired: return "ERROR: timed out"
-    except Exception as e:            return f"ERROR: {e}"
-
-def execute(name: str, args: dict, cwd: Path,
-            skills: list[dict], active: dict|None
-            ) -> tuple[str, bool, dict|None, str|None]:
-    if name == "done":
-        return args.get("answer",""), True, active, None
-    if name.startswith("activate_skill_"):
-        sname = name[len("activate_skill_"):]
-        s = next((x for x in skills if x["name"]==sname), None)
-        if not s: return f"ERROR: no skill '{sname}'", False, active, None
-        return f"Skill '{sname}' loaded.", False, s, s["path"].read_text(errors="replace")
-    if active and active.get("allowed"):
-        if name.lower() not in {t.lower() for t in active["allowed"]}:
-            return f"ERROR: skill '{active['name']}' restricts to {active['allowed']}", False, active, None
-    if name == "bash":
-        return run_bash(args.get("cmd",""), cwd), False, active, None
-    if name == "write_file":
-        p = args.get("path","")
-        if not p: return "ERROR: missing path", False, active, None
-        fp = cwd/p; fp.parent.mkdir(parents=True, exist_ok=True)
-        fp.write_text(args.get("content",""))
-        return f"OK: wrote {fp}", False, active, None
-    return f"ERROR: unknown tool '{name}'", False, active, None
-
-# ── Parser ────────────────────────────────────────────────────────────────────
-
-_JSON_RE  = re.compile(r'\{\s*"tool"\s*:\s*"(?P<n>[^"]+)"\s*,\s*"args"\s*:\s*\{')
-_FENCE_RE = re.compile(r'```(?:bash|sh)\n(.*?)```', re.DOTALL)
-
-def _bend(text: str, start: int) -> int|None:
-    d=0; ins=False; esc=False
-    for i in range(start, len(text)):
-        c=text[i]
-        if esc:             esc=False; continue
-        if c=="\\" and ins: esc=True;  continue
-        if c=='"':          ins=not ins; continue
-        if ins:             continue
-        if c=="{": d+=1
-        elif c=="}":
-            d-=1
-            if d==0: return i
-    return None
-
-# def parse_call(text: str) -> tuple[str,dict]|None:
-#     text = _FENCE_RE.sub(
-#         lambda m: json.dumps({"tool":"bash","args":{"cmd":m.group(1).strip()}}), text)
-#     for m in _JSON_RE.finditer(text):
-#         ab=m.end()-1; ae=_bend(text,ab)
-#         if ae is None: continue
-#         try: return m.group("n"), json.loads(text[ab:ae+1])
-#         except json.JSONDecodeError: continue
-#     return None
-
-def parse_call(text: str):
-    last = text.strip().splitlines()[-1]
-
-    try:
-        obj = json.loads(last)
+        obj = json.loads(stripped)
+        if isinstance(obj, dict):
+            name = obj.get("name") or obj.get("tool")
+            args = obj.get("arguments") or obj.get("input") or {}
+            if name:
+                if isinstance(args, str):
+                    try:    args = json.loads(args)
+                    except: args = {"raw": args}
+                blocks.append({
+                    "type": "tool_use",
+                    "id":   f"toolu_{uuid.uuid4().hex[:8]}",
+                    "name": name,
+                    "input": args,
+                })
+                return blocks, "tool_use"
     except Exception:
-        return None
+        pass
 
-    if "tool" in obj and "args" in obj:
-        return obj["tool"], obj["args"]
+    if remaining:
+        blocks.append({"type": "text", "text": remaining})
+    return blocks or [{"type": "text", "text": raw}], "end_turn"
 
-    return None
 
-# ── Generate ──────────────────────────────────────────────────────────────────
+def resolve_read_skill(blocks, body, max_tokens, temp, top_p):
+    extra = []
+    for _ in range(5):
+        skill_calls = [b for b in blocks if b.get("type")=="tool_use" and b["name"]=="read_skill"]
+        if not skill_calls:
+            break
+        log("↻ SKILL TOOL", "\n".join(f"  read_skill({c['input']})" for c in skill_calls))
+        for c in skill_calls:
+            name    = c["input"].get("name","")
+            content = skill_body(name)
+            args    = f"<parameter=name>\n{name}\n</parameter>"
+            extra.append({"role": "assistant", "content": f"<tool_call>\n<function=read_skill>\n{args}</function>\n</tool_call>"})
+            log(f"↻ SKILL BODY [{name}]", content[:500] + ("…" if len(content)>500 else ""))
+            extra.append({"role": "user", "content": f"<tool_response>\n{content}\n</tool_response>"})
+        prompt = build_prompt(body, extra=extra)
+        log("→ MLX (re-prompt tail)", prompt[-LOG_PROMPT_TAIL:])
+        raw = generate(prompt, max_tokens, temp, top_p)
+        log("← MLX RAW", raw)
+        blocks, stop_reason = parse_output(raw)
+        log("← PARSED", json.dumps(blocks, indent=2))
+    stop_reason = "tool_use" if any(b.get("type")=="tool_use" for b in blocks) else "end_turn"
+    return blocks, stop_reason
 
-def generate(model, tok, messages: list[dict], max_tok: int) -> str:
-    prompt = tok.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-    buf: list[str] = []
-    for chunk in stream_generate(model, tok, prompt=prompt, max_tokens=max_tok):
-        print(chunk.text, end="", flush=True); buf.append(chunk.text)
-    print()
-    return "".join(buf)
+def sse(event, data):
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
 
-# ── Agent loop ────────────────────────────────────────────────────────────────
+def blocks_to_sse(blocks, msg_id, stop_reason, in_tokens, out_tokens):
+    out = bytearray()
 
-def agent_loop(model, tok, user_input: str, cwd: Path,
-               claude_md: str, skills: list[dict], history: list[dict],
-               max_tok: int, forced_skill: dict|None=None
-               ) -> tuple[str, str, list[dict]]:
-    active: dict|None = None
-    preamble = ""
-    if forced_skill:
-        preamble = f"[Skill '{forced_skill['name']}' activated]\n{forced_skill['path'].read_text().strip()}\n\n"
-        active   = forced_skill
-        cp(DIM, f"  [skill '{forced_skill['name']}' force-loaded]")
+    out += sse("message_start", {
+        "type": "message_start",
+        "message": {
+            "id": msg_id, "type": "message", "role": "assistant",
+            "model": model_id, "content": [], "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {"input_tokens": in_tokens, "output_tokens": 0},
+        },
+    })
 
-    history.append({"role":"user","content":preamble+user_input})
-    injected: list[str] = []
-    recent:   list[str] = []
+    for i, block in enumerate(blocks):
+        bt = block["type"]
 
-    for _ in range(MAX_TOOL_TURNS):
-        msgs = ([{"role":"system","content":sys_prompt(cwd,claude_md,skills)}]
-                + [{"role":"system","content":b} for b in injected]
-                + history)
-        cp(CYAN, f"\n{'─'*60}"); cp(BOLD+CYAN, "Assistant:")
-        resp = generate(model, tok, msgs, max_tok)
-        history.append({"role":"assistant","content":resp})
+        if bt == "text":
+            out += sse("content_block_start", {
+                "type": "content_block_start", "index": i,
+                "content_block": {"type": "text", "text": ""},
+            })
+            out += sse("content_block_delta", {
+                "type": "content_block_delta", "index": i,
+                "delta": {"type": "text_delta", "text": block["text"]},
+            })
 
-        call = parse_call(resp)
-        if call is None: return resp, claude_md, skills
+        elif bt == "thinking":
+            out += sse("content_block_start", {
+                "type": "content_block_start", "index": i,
+                "content_block": {"type": "thinking", "thinking": ""},
+            })
+            out += sse("content_block_delta", {
+                "type": "content_block_delta", "index": i,
+                "delta": {"type": "thinking_delta", "thinking": block["thinking"]},
+            })
 
-        name, args = call
-        if name == "done":
-            cp(GREEN,"\n✅ Done.")
-            return args.get("answer",resp), claude_md, skills
+        elif bt == "tool_use":
+            out += sse("content_block_start", {
+                "type": "content_block_start", "index": i,
+                "content_block": {
+                    "type": "tool_use", "id": block["id"],
+                    "name": block["name"], "input": {},
+                },
+            })
+            out += sse("content_block_delta", {
+                "type": "content_block_delta", "index": i,
+                "delta": {"type": "input_json_delta", "partial_json": json.dumps(block["input"])},
+            })
 
-        sig = json.dumps({"t":name,"a":args},sort_keys=True)
-        if sig in recent:
-            history.append({"role":"user","content":
-                "[SYSTEM] You already ran this exact call. Do not repeat it. "
-                "Write your final answer as plain text now."})
-            recent.clear(); continue
-        recent.append(sig)
-        if len(recent)>6: recent.pop(0)
+        out += sse("content_block_stop", {"type": "content_block_stop", "index": i})
 
-        cp(YELLOW, f"\n🔧 {name}: {json.dumps(args,ensure_ascii=False)[:160]}")
-        result, done, active, skill_body = execute(name, args, cwd, skills, active)
+    out += sse("message_delta", {
+        "type": "message_delta",
+        "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+        "usage": {"output_tokens": out_tokens},
+    })
+    out += sse("message_stop", {"type": "message_stop"})
 
-        if done: cp(GREEN,"\n✅ Done."); return result, claude_md, skills
-        if skill_body:
-            injected.append(f"[Skill '{name[len('activate_skill_'):]}']\n{skill_body}")
-            cp(DIM, "  [skill body injected]")
+    return bytes(out)
 
-        cp(DIM, textwrap.indent(result[:600],"    "))
 
-        touched = args.get("cmd","") + args.get("path","")
-        if "CLAUDE.md" in touched:
-            claude_md = load_claude_md(cwd); cp(DIM,"  [CLAUDE.md reloaded]")
-        if ".claude/skills" in touched:
-            skills = discover_skills(cwd); cp(DIM,f"  [skills reloaded: {len(skills)}]")
+class Handler(BaseHTTPRequestHandler):
 
-        history.append({"role":"user","content":f"[tool result: {name}]\n{result}"})
+    def log_message(self, fmt, *args):
+        print(f"  HTTP {fmt % args}", flush=True)
 
-    cp(RED,f"\n⚠️  Hit {MAX_TOOL_TURNS}-turn limit.")
-    return "(turn limit reached)", claude_md, skills
+    def send_json(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
-# ── REPL ──────────────────────────────────────────────────────────────────────
+    def read_json(self):
+        n = int(self.headers.get("Content-Length", 0))
+        return json.loads(self.rfile.read(n))
 
-HELP = """\
-  /help              this message
-  /claude            print CLAUDE.md
-  /skills            list skills
-  /skill <n>      force-invoke a skill
-  /reload            rescan CLAUDE.md + skills
-  /clear             clear conversation history
-  /quit              exit"""
+    def path_base(self):
+        return self.path.split("?")[0].rstrip("/")
+
+    def do_GET(self):
+        if self.path_base() == "/v1/models":
+            self.send_json(200, {"data": [
+                {"id": model_id, "object": "model",
+                 "created": int(time.time()), "owned_by": "local"},
+            ]})
+        else:
+            self.send_json(404, {"error": "not found"})
+
+    def do_POST(self):
+        pb = self.path_base()
+
+        if pb == "/v1/messages/count_tokens":
+            self.send_json(200, {"input_tokens": 0})
+            return
+
+        if pb != "/v1/messages":
+            self.send_json(404, {"error": f"unknown endpoint {pb}"})
+            return
+
+        body = self.read_json()
+        body["model"] = model_id   
+
+        max_tokens = body.get("max_tokens", 8192)
+        temp       = body.get("temperature", 0.7)
+        top_p      = body.get("top_p", 0.9)
+        msg_id     = f"msg_{uuid.uuid4().hex}"
+
+        tools_requested = [t["name"] for t in body.get("tools", [])]
+        last_msg = body.get("messages", [{}])[-1]
+        last_content = last_msg.get("content", "")
+        if isinstance(last_content, list):
+            last_content = " | ".join(
+                b.get("text", b.get("type","?"))[:80]
+                for b in last_content
+            )
+        tool_schemas = body.get("tools", [])
+        if len(body.get("messages", [])) <= 1:
+            tools_summary = json.dumps(tool_schemas, indent=2)
+        else:
+            tools_summary = str(tools_requested)
+
+        log("→ CC REQUEST", (
+            f"tools: {tools_summary}\n"
+            f"msgs:  {len(body.get('messages',[]))}\n"
+            f"last:  {str(last_content)[:200]}"
+        ))
+
+        prompt = build_prompt(body)
+        log("→ MLX PROMPT (tail)", prompt[-LOG_PROMPT_TAIL:])
+
+        t0  = time.time()
+        raw = generate(prompt, max_tokens, temp, top_p)
+        dt  = time.time() - t0
+
+        log(f"← MLX RAW ({dt:.1f}s)", raw)
+
+        blocks, stop_reason = parse_output(raw)
+        log("← PARSED", json.dumps(blocks, indent=2))
+
+        if any(b.get("type")=="tool_use" and b["name"]=="read_skill" for b in blocks):
+            blocks, stop_reason = resolve_read_skill(blocks, body, max_tokens, temp, top_p)
+
+        in_tokens  = len(tokenizer.encode(prompt))
+        out_tokens = len(tokenizer.encode(raw))
+
+        sse_bytes = blocks_to_sse(blocks, msg_id, stop_reason, in_tokens, out_tokens)
+
+        log("→ CC RESPONSE", (
+            f"stop_reason: {stop_reason}\n"
+            f"blocks: {[b['type'] for b in blocks]}\n"
+            f"tokens: {in_tokens} in / {out_tokens} out\n"
+            f"sse_bytes: {len(sse_bytes)}"
+        ))
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Content-Length", str(len(sse_bytes)))
+        self.end_headers()
+        try:
+            self.wfile.write(sse_bytes)
+            self.wfile.flush()
+        except BrokenPipeError:
+            pass
 
 def main():
-    ap = argparse.ArgumentParser(description="mlx-code: local Claude Code via mlx-lm")
-    ap.add_argument("--model",      default=DEFAULT_MODEL)
-    ap.add_argument("--dir",        default=".")
-    ap.add_argument("--max-tokens", default=2048, type=int)
-    a = ap.parse_args(); cwd = Path(a.dir).resolve()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model",  default=DEFAULT_MODEL)
+    parser.add_argument("--port",   type=int, default=8000)
+    parser.add_argument("--host",   default="127.0.0.1")
+    parser.add_argument("--skills", action="append", metavar="DIR")
+    args = parser.parse_args()
 
-    cp(BOLD+GREEN,"\n╔════════════════════════════════╗")
-    cp(BOLD+GREEN,  "║           mlx-code             ║")
-    cp(BOLD+GREEN,  "║  Local Claude Code via mlx-lm  ║")
-    cp(BOLD+GREEN,  "╚════════════════════════════════╝\n")
-    cp(DIM,f"Project : {cwd}"); cp(DIM,f"Model   : {a.model}\n")
+    skill_dirs = args.skills or DEFAULT_SKILL_DIRS
+    print("Scanning skills …", flush=True)
+    skills = scan_skills(skill_dirs)
+    print(f"Found {len(skills)} skill(s).\n", flush=True)
 
-    cp(YELLOW,f"Loading {a.model} …")
-    tc = {"trust_remote_code":True} if "qwen" in a.model.lower() else {}
-    model, tok = load(a.model, tokenizer_config=tc)
-    cp(GREEN,"Model loaded ✓\n")
+    load_model(args.model)
 
-    claude_md = load_claude_md(cwd)
-    skills    = discover_skills(cwd)
-    cp(DIM,f"📄 CLAUDE.md : {'loaded' if claude_md else 'not found'}")
-    n = sum(1 for s in skills if not s["no_auto"])
-    cp(DIM,f"🧩 Skills    : {len(skills)} total, {n} model-invocable" +
-       (f"  ({', '.join(s['name'] for s in skills)})" if skills else
-        "  (none — add ~/.claude/skills/<n>/SKILL.md)"))
-    cp(DIM,"\nType /help for commands.\n")
+    print(f"🍎  mlx-claude-server  http://{args.host}:{args.port}")
+    print(f"    model  : {args.model}")
+    print(f"    skills : {len(skills)}")
+    print()
+    print("    Other terminal:")
+    print(f"      export ANTHROPIC_BASE_URL=http://{args.host}:{args.port}")
+    print( "      export ANTHROPIC_AUTH_TOKEN=local")
+    print(f"      export ANTHROPIC_MODEL={args.model}")
+    print(f"      export ANTHROPIC_SMALL_FAST_MODEL={args.model}")
+    print( "      claude")
+    print()
 
-    history: list[dict] = []; forced: dict|None = None
-    while True:
-        try:
-            cp(BOLD+GREEN,"\n> You: "); ui = input("").strip()
-        except (EOFError,KeyboardInterrupt):
-            cp(YELLOW,"\nGoodbye!"); break
-        if not ui: continue
-        if ui.startswith("/"):
-            ps=ui.split(maxsplit=1); cmd=ps[0].lower(); arg=ps[1].strip() if len(ps)>1 else ""
-            if   cmd=="/quit":   cp(YELLOW,"Goodbye!"); break
-            elif cmd=="/help":   print(HELP)
-            elif cmd=="/claude": print(claude_md or "(empty)")
-            elif cmd=="/skills":
-                if skills:
-                    for s in skills:
-                        flags = " [manual-only]" if s["no_auto"] else ""
-                        cp(GREEN,f"  • {s['name']}{flags}"); print(f"    {s['desc']}")
-                else: cp(DIM,"No skills found.")
-            elif cmd=="/skill":
-                m=next((s for s in skills if s["name"]==arg and not s["no_user"]),None)
-                if m: forced=m; cp(GREEN,f"Skill '{arg}' injected next turn.")
-                else: cp(RED,f"No skill '{arg}'.  /skills to list.")
-            elif cmd=="/reload":
-                claude_md=load_claude_md(cwd); skills=discover_skills(cwd)
-                cp(GREEN,f"Reloaded. {len(skills)} skill(s).")
-            elif cmd=="/clear":
-                history.clear(); cp(GREEN,"History cleared.")
-            else: cp(RED,f"Unknown '{cmd}'.  /help")
-            continue
-        _, claude_md, skills = agent_loop(
-            model,tok,ui,cwd,claude_md,skills,history,a.max_tokens,forced)
-        forced=None
-        claude_md=load_claude_md(cwd); skills=discover_skills(cwd)
+    server = HTTPServer((args.host, args.port), Handler)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down.")
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()

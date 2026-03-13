@@ -6,7 +6,7 @@ setup(
     author_email="albersj66@gmail.com",
     author="J Joe",
     license="Apache-2.0",
-    version="0.0.1a0",
+    version="0.0.1a1",
     readme="README.md",
     description="Local Claude Code-style coding agent via mlx-lm",
     long_description=open("README.md").read(),
