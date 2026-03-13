@@ -1,6 +1,7 @@
 # mlx-code: Local Claude Code for Mac
 
 <img width="1024" height="1536" alt="mlxcodelogo" src="https://github.com/user-attachments/assets/df605c1d-f8e7-433c-9aaf-176c73e3d628" />
+
 ![mlxcode](https://github.com/user-attachments/assets/86004bd2-549f-44b8-9a05-a9b6d9f1c4a2)
 
 ### Quick Start
