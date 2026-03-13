@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import os
 import re
 import subprocess
@@ -19,27 +20,62 @@ DEFAULT_MODEL      = "mlx-community/Qwen3.5-4B-OptiQ-4bit"
 DEFAULT_SKILL_DIRS = ["./skills", os.path.expanduser("~/.claude/skills")]
 LOG_FILE           = "mlx_trace.log"
 
-model     = None
-tokenizer = None
-model_id  = None
-skills    = {}
-_call_counter = 0
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.DEBUG,
+    format="%(message)s",
+)
+logger = logging.getLogger(__name__)
 
-def trace(prompt: str, raw: str, elapsed: float):
-    global _call_counter
-    _call_counter += 1
-    sep = "=" * 80
-    entry = (
-        f"\n{sep}\n"
-        f"CALL {_call_counter}  {time.strftime('%Y-%m-%d %H:%M:%S')}  ({elapsed:.1f}s)\n"
-        f"{sep}\n"
-        f"--- PROMPT ---\n{prompt}\n"
-        f"--- OUTPUT ---\n{raw}\n"
-    )
-    with open(LOG_FILE, "a") as f:
-        f.write(entry)
+class AppState:
+    def __init__(self, model, tokenizer, model_id: str, skills: dict):
+        self.model     = model
+        self.tokenizer = tokenizer
+        self.model_id  = model_id
+        self.skills    = skills         
+        self._counter  = 0
+        self._lock     = threading.Lock()
 
-def parse_frontmatter(text):
+    def trace(self, prompt: str, raw: str, elapsed: float):
+        with self._lock:
+            self._counter += 1
+            count = self._counter
+        sep = "=" * 80
+        logger.debug(
+            "\n%s\nCALL %d  %s  (%.1fs)\n%s\n--- PROMPT ---\n%s\n--- OUTPUT ---\n%s\n",
+            sep, count, time.strftime("%Y-%m-%d %H:%M:%S"), elapsed, sep, prompt, raw,
+        )
+
+    def skill_body(self, name: str) -> str:
+        if name not in self.skills:
+            available = ", ".join(self.skills) or "none"
+            return f"Unknown skill '{name}'. Available: {available}"
+        try:
+            return Path(self.skills[name]["path"]).read_text()
+        except Exception as e:
+            return f"Error reading skill: {e}"
+
+    def generate(self, prompt: str, max_tokens: int, temp: float, top_p: float) -> str:
+        from mlx_lm import generate as mlx_gen
+        t0  = time.time()
+        raw = mlx_gen(
+            self.model, self.tokenizer,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            verbose=False,
+        )
+        self.trace(prompt, raw, time.time() - t0)
+        return raw
+
+    def encode(self, text: str) -> list:
+        return self.tokenizer.encode(text)
+
+    def apply_chat_template(self, messages: list) -> str:
+        return self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+
+def parse_frontmatter(text: str):
     m = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
     if not m:
         return {}, text
@@ -57,7 +93,8 @@ def parse_frontmatter(text):
             fm[k.strip()] = v.strip()
     return fm, body
 
-def scan_skills(dirs):
+
+def scan_skills(dirs: list) -> dict:
     found = {}
     for d in dirs:
         p = Path(d)
@@ -75,37 +112,17 @@ def scan_skills(dirs):
                 print(f"  warn: {f}: {e}", flush=True)
     return found
 
-def skill_body(name):
-    if name not in skills:
-        return f"Unknown skill '{name}'. Available: {', '.join(skills) or 'none'}"
-    try:
-        return Path(skills[name]["path"]).read_text()
-    except Exception as e:
-        return f"Error reading skill: {e}"
+ANTI_LOOP_INSTRUCTION = (
+    "After you have written your response, stop immediately. "
+    "Do not re-read the question, do not re-draft the answer, "
+    "do not explain what you just did. Output your answer once and stop."
+)
 
-def load_model(path):
-    global model, tokenizer, model_id
-    from mlx_lm import load
-    print(f"Loading {path} …", flush=True)
-    model, tokenizer = load(path)
-    model_id = path
-    print("Ready.\n", flush=True)
 
-def generate(prompt, max_tokens, temp, top_p):
-    from mlx_lm import generate as mlx_gen
-    t0  = time.time()
-    raw = mlx_gen(
-        model, tokenizer,
-        prompt=prompt,
-        max_tokens=max_tokens,
-        verbose=False,
-    )
-    trace(prompt, raw, time.time() - t0)
-    return raw
-
-def skills_system_addon():
+def skills_system_addon(skills: dict) -> str:
+    base = ANTI_LOOP_INSTRUCTION
     if not skills:
-        return ""
+        return base
     entries = "\n".join(
         f"<skill><n>{n}</n><description>{s['description']}</description></skill>"
         for n, s in skills.items()
@@ -113,10 +130,12 @@ def skills_system_addon():
     return (
         "\n\n<available_skills>\n" + entries +
         "\nUse the read_skill tool to get full instructions before attempting "
-        "any task that matches a skill.\n</available_skills>"
+        "any task that matches a skill.\n</available_skills>\n\n"
+        + base
     )
 
-def tools_to_text(tools):
+
+def tools_to_text(tools: list) -> str:
     header = (
         "You have access to these tools. "
         "To call a tool output ONLY a <tool_call> block:\n"
@@ -131,7 +150,8 @@ def tools_to_text(tools):
         lines.append(f"- {name}({params}): {desc}")
     return "\n".join(lines)
 
-def build_messages(body, extra=None):
+
+def build_messages(body: dict, skills: dict, extra: list = None) -> list:
     msgs = []
 
     sys_parts = []
@@ -139,15 +159,16 @@ def build_messages(body, extra=None):
     if isinstance(raw, str) and raw:
         sys_parts.append(raw)
     elif isinstance(raw, list):
-        t = "\n".join(b.get("text","") for b in raw if b.get("type")=="text")
-        if t: sys_parts.append(t)
-    sys_parts.append(skills_system_addon())
+        t = "\n".join(b.get("text", "") for b in raw if b.get("type") == "text")
+        if t:
+            sys_parts.append(t)
+    sys_parts.append(skills_system_addon(skills))
 
     if skills:
         sys_parts.append(tools_to_text([{
             "name": "read_skill",
             "description": "Read the full SKILL.md instructions for a skill before using it.",
-            "input_schema": {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},
+            "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
         }]))
 
     system = "\n".join(p for p in sys_parts if p).strip()
@@ -166,7 +187,7 @@ def build_messages(body, extra=None):
             if t == "text":
                 parts.append(block["text"])
             elif t == "thinking":
-                parts.append(f"<think>\n{block.get('thinking','')}\n</think>")
+                parts.append(f"<think>\n{block.get('thinking', '')}\n</think>")
             elif t == "tool_use":
                 args = "".join(
                     f"<parameter={k}>\n{v}\n</parameter>"
@@ -176,7 +197,7 @@ def build_messages(body, extra=None):
             elif t == "tool_result":
                 rc = block.get("content", "")
                 if isinstance(rc, list):
-                    rc = "\n".join(c.get("text","") for c in rc if c.get("type")=="text")
+                    rc = "\n".join(c.get("text", "") for c in rc if c.get("type") == "text")
                 parts.append(f"<tool_response>\n{rc}\n</tool_response>")
         msgs.append({"role": role, "content": "\n".join(parts)})
 
@@ -184,22 +205,23 @@ def build_messages(body, extra=None):
         msgs.extend(extra)
     return msgs
 
-def build_prompt(body, extra=None):
-    msgs = build_messages(body, extra=extra)
-    return tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
 
-def parse_output(raw):
+def build_prompt(body: dict, state: AppState, extra: list = None) -> str:
+    msgs = build_messages(body, state.skills, extra=extra)
+    return state.apply_chat_template(msgs)
+
+def parse_output(raw: str):
     blocks    = []
     remaining = raw
 
     while "<think>" in remaining and "</think>" in remaining:
-        s = remaining.index("<think>")
-        e = remaining.index("</think>")
+        s      = remaining.index("<think>")
+        e      = remaining.index("</think>")
         before = remaining[:s].strip()
         if before:
             blocks.append({"type": "text", "text": before})
-        blocks.append({"type": "thinking", "thinking": remaining[s+7:e].strip()})
-        remaining = remaining[e+8:].strip()
+        blocks.append({"type": "thinking", "thinking": remaining[s + 7:e].strip()})
+        remaining = remaining[e + 8:].strip()
     remaining = remaining.replace("</think>", "").strip()
 
     tool_blocks = []
@@ -213,8 +235,10 @@ def parse_output(raw):
             name = obj.get("name") or obj.get("tool")
             args = obj.get("arguments") or obj.get("input") or {}
             if isinstance(args, str):
-                try:    args = json.loads(args)
-                except: args = {"raw": args}
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    args = {"raw": args}
             if name:
                 parsed = {"name": name, "input": args}
         except Exception:
@@ -252,8 +276,10 @@ def parse_output(raw):
             args = obj.get("arguments") or obj.get("input") or {}
             if name:
                 if isinstance(args, str):
-                    try:    args = json.loads(args)
-                    except: args = {"raw": args}
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {"raw": args}
                 blocks.append({
                     "type": "tool_use",
                     "id":   f"toolu_{uuid.uuid4().hex[:8]}",
@@ -268,35 +294,44 @@ def parse_output(raw):
         blocks.append({"type": "text", "text": remaining})
     return blocks or [{"type": "text", "text": raw}], "end_turn"
 
-def resolve_read_skill(blocks, body, max_tokens, temp, top_p):
-    extra = []
+
+def resolve_read_skill(
+    blocks: list, body: dict, state: AppState,
+    max_tokens: int, temp: float, top_p: float,
+) -> tuple:
+    extra       = []
+    stop_reason = "tool_use"
+
     for _ in range(5):
-        skill_calls = [b for b in blocks if b.get("type")=="tool_use" and b["name"]=="read_skill"]
+        skill_calls = [b for b in blocks if b.get("type") == "tool_use" and b["name"] == "read_skill"]
         if not skill_calls:
             break
         for c in skill_calls:
-            name    = c["input"].get("name","")
-            content = skill_body(name)
+            name    = c["input"].get("name", "")
+            content = state.skill_body(name)
             args    = f"<parameter=name>\n{name}\n</parameter>"
             extra.append({"role": "assistant", "content": f"<tool_call>\n<function=read_skill>\n{args}</function>\n</tool_call>"})
-            extra.append({"role": "user", "content": f"<tool_response>\n{content}\n</tool_response>"})
-        prompt = build_prompt(body, extra=extra)
-        raw    = generate(prompt, max_tokens, temp, top_p)
+            extra.append({"role": "user",      "content": f"<tool_response>\n{content}\n</tool_response>"})
+        prompt = build_prompt(body, state, extra=extra)
+        raw    = state.generate(prompt, max_tokens, temp, top_p)
         blocks, stop_reason = parse_output(raw)
-    stop_reason = "tool_use" if any(b.get("type")=="tool_use" for b in blocks) else "end_turn"
+        if stop_reason == "end_turn":
+            break
+
     return blocks, stop_reason
 
-def sse(event, data):
+def sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
 
-def blocks_to_sse(blocks, msg_id, stop_reason, in_tokens, out_tokens):
+
+def blocks_to_sse(blocks: list, msg_id: str, stop_reason: str, in_tokens: int, out_tokens: int) -> bytes:
     out = bytearray()
 
     out += sse("message_start", {
         "type": "message_start",
         "message": {
             "id": msg_id, "type": "message", "role": "assistant",
-            "model": model_id, "content": [], "stop_reason": None,
+            "model": "local", "content": [], "stop_reason": None,
             "stop_sequence": None,
             "usage": {"input_tokens": in_tokens, "output_tokens": 0},
         },
@@ -349,77 +384,89 @@ def blocks_to_sse(blocks, msg_id, stop_reason, in_tokens, out_tokens):
 
     return bytes(out)
 
-class Handler(BaseHTTPRequestHandler):
+def make_handler(state: AppState):
 
-    def log_message(self, fmt, *args):
-        pass  
+    class Handler(BaseHTTPRequestHandler):
 
-    def send_json(self, code, obj):
-        body = json.dumps(obj).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def read_json(self):
-        n = int(self.headers.get("Content-Length", 0))
-        return json.loads(self.rfile.read(n))
-
-    def path_base(self):
-        return self.path.split("?")[0].rstrip("/")
-
-    def do_GET(self):
-        if self.path_base() == "/v1/models":
-            self.send_json(200, {"data": [
-                {"id": model_id, "object": "model",
-                 "created": int(time.time()), "owned_by": "local"},
-            ]})
-        else:
-            self.send_json(404, {"error": "not found"})
-
-    def do_POST(self):
-        pb = self.path_base()
-
-        if pb == "/v1/messages/count_tokens":
-            self.send_json(200, {"input_tokens": 0})
-            return
-
-        if pb != "/v1/messages":
-            self.send_json(404, {"error": f"unknown endpoint {pb}"})
-            return
-
-        body = self.read_json()
-        body["model"] = model_id
-
-        max_tokens = body.get("max_tokens", 8192)
-        temp       = body.get("temperature", 0.7)
-        top_p      = body.get("top_p", 0.9)
-        msg_id     = f"msg_{uuid.uuid4().hex}"
-
-        prompt = build_prompt(body)
-        raw    = generate(prompt, max_tokens, temp, top_p)
-
-        blocks, stop_reason = parse_output(raw)
-
-        if any(b.get("type")=="tool_use" and b["name"]=="read_skill" for b in blocks):
-            blocks, stop_reason = resolve_read_skill(blocks, body, max_tokens, temp, top_p)
-
-        in_tokens  = len(tokenizer.encode(prompt))
-        out_tokens = len(tokenizer.encode(raw))
-
-        sse_bytes = blocks_to_sse(blocks, msg_id, stop_reason, in_tokens, out_tokens)
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Content-Length", str(len(sse_bytes)))
-        self.end_headers()
-        try:
-            self.wfile.write(sse_bytes)
-            self.wfile.flush()
-        except BrokenPipeError:
+        def log_message(self, fmt, *args):
             pass
+
+        def send_json(self, code: int, obj: dict):
+            body = json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def read_json(self) -> dict:
+            n = int(self.headers.get("Content-Length", 0))
+            return json.loads(self.rfile.read(n))
+
+        def path_base(self) -> str:
+            return self.path.split("?")[0].rstrip("/")
+
+        def do_GET(self):
+            if self.path_base() == "/v1/models":
+                self.send_json(200, {"data": [
+                    {"id": state.model_id, "object": "model",
+                     "created": int(time.time()), "owned_by": "local"},
+                ]})
+            else:
+                self.send_json(404, {"error": "not found"})
+
+        def do_POST(self):
+            pb = self.path_base()
+
+            if pb == "/v1/messages/count_tokens":
+                self.send_json(200, {"input_tokens": 0})
+                return
+
+            if pb != "/v1/messages":
+                self.send_json(404, {"error": f"unknown endpoint {pb}"})
+                return
+
+            body = self.read_json()
+            body["model"] = state.model_id
+
+            max_tokens = body.get("max_tokens", 8192)
+            temp       = body.get("temperature", 0.7)
+            top_p      = body.get("top_p", 0.9)
+            msg_id     = f"msg_{uuid.uuid4().hex}"
+
+            prompt = build_prompt(body, state)
+            raw    = state.generate(prompt, max_tokens, temp, top_p)
+
+            blocks, stop_reason = parse_output(raw)
+
+            if any(b.get("type") == "tool_use" and b["name"] == "read_skill" for b in blocks):
+                blocks, stop_reason = resolve_read_skill(blocks, body, state, max_tokens, temp, top_p)
+
+            in_tokens  = len(state.encode(prompt))
+            out_tokens = len(state.encode(raw))
+
+            sse_bytes = blocks_to_sse(blocks, msg_id, stop_reason, in_tokens, out_tokens)
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Length", str(len(sse_bytes)))
+            self.end_headers()
+            try:
+                self.wfile.write(sse_bytes)
+                self.wfile.flush()
+            except BrokenPipeError:
+                pass
+
+    return Handler
+
+def load_model(path: str):
+    from mlx_lm import load
+    print(f"Loading {path} …", flush=True)
+    model, tokenizer = load(path)
+    print("Ready.\n", flush=True)
+    return model, tokenizer
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -433,9 +480,10 @@ def main():
     print("Scanning skills …", flush=True)
     skills = scan_skills(skill_dirs)
 
-    load_model(args.model)
+    model, tokenizer = load_model(args.model)
+    state = AppState(model, tokenizer, args.model, skills)
 
-    server = HTTPServer((args.host, args.port), Handler)
+    server = HTTPServer((args.host, args.port), make_handler(state))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
@@ -452,6 +500,7 @@ def main():
 
     result = subprocess.run(["claude"] + claude_args, env=env)
     sys.exit(result.returncode)
+
 
 if __name__ == "__main__":
     main()
