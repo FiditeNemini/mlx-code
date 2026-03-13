@@ -2,6 +2,9 @@ import argparse
 import json
 import os
 import re
+import subprocess
+import sys
+import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -14,18 +17,27 @@ except ImportError:
 
 DEFAULT_MODEL      = "mlx-community/Qwen3.5-4B-OptiQ-4bit"
 DEFAULT_SKILL_DIRS = ["./skills", os.path.expanduser("~/.claude/skills")]
-LOG_PROMPT_TAIL    = 1000   
+LOG_FILE           = "mlx_trace.log"
 
 model     = None
 tokenizer = None
 model_id  = None
 skills    = {}
+_call_counter = 0
 
-
-def log(tag, text):
-    bar = "─" * 60
-    print(f"\n{bar}\n{tag}\n{bar}\n{text}\n", flush=True)
-
+def trace(prompt: str, raw: str, elapsed: float):
+    global _call_counter
+    _call_counter += 1
+    sep = "=" * 80
+    entry = (
+        f"\n{sep}\n"
+        f"CALL {_call_counter}  {time.strftime('%Y-%m-%d %H:%M:%S')}  ({elapsed:.1f}s)\n"
+        f"{sep}\n"
+        f"--- PROMPT ---\n{prompt}\n"
+        f"--- OUTPUT ---\n{raw}\n"
+    )
+    with open(LOG_FILE, "a") as f:
+        f.write(entry)
 
 def parse_frontmatter(text):
     m = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
@@ -71,7 +83,6 @@ def skill_body(name):
     except Exception as e:
         return f"Error reading skill: {e}"
 
-
 def load_model(path):
     global model, tokenizer, model_id
     from mlx_lm import load
@@ -82,37 +93,21 @@ def load_model(path):
 
 def generate(prompt, max_tokens, temp, top_p):
     from mlx_lm import generate as mlx_gen
-    return mlx_gen(
+    t0  = time.time()
+    raw = mlx_gen(
         model, tokenizer,
         prompt=prompt,
         max_tokens=max_tokens,
         verbose=False,
     )
-
-
-READ_SKILL_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "read_skill",
-        "description": (
-            "Read the full SKILL.md for a skill before using it. "
-            "Call this whenever a task matches a skill description."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Skill name from available_skills"}
-            },
-            "required": ["name"],
-        },
-    },
-}
+    trace(prompt, raw, time.time() - t0)
+    return raw
 
 def skills_system_addon():
     if not skills:
         return ""
     entries = "\n".join(
-        f"<skill><name>{n}</name><description>{s['description']}</description></skill>"
+        f"<skill><n>{n}</n><description>{s['description']}</description></skill>"
         for n, s in skills.items()
     )
     return (
@@ -189,11 +184,9 @@ def build_messages(body, extra=None):
         msgs.extend(extra)
     return msgs
 
-
 def build_prompt(body, extra=None):
     msgs = build_messages(body, extra=extra)
     return tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-
 
 def parse_output(raw):
     blocks    = []
@@ -212,7 +205,7 @@ def parse_output(raw):
     tool_blocks = []
     leftover    = remaining
     for m in re.finditer(r"<tool_call>(.*?)</tool_call>", remaining, re.DOTALL):
-        inner = m.group(1).strip()
+        inner  = m.group(1).strip()
         parsed = None
 
         try:
@@ -275,27 +268,21 @@ def parse_output(raw):
         blocks.append({"type": "text", "text": remaining})
     return blocks or [{"type": "text", "text": raw}], "end_turn"
 
-
 def resolve_read_skill(blocks, body, max_tokens, temp, top_p):
     extra = []
     for _ in range(5):
         skill_calls = [b for b in blocks if b.get("type")=="tool_use" and b["name"]=="read_skill"]
         if not skill_calls:
             break
-        log("↻ SKILL TOOL", "\n".join(f"  read_skill({c['input']})" for c in skill_calls))
         for c in skill_calls:
             name    = c["input"].get("name","")
             content = skill_body(name)
             args    = f"<parameter=name>\n{name}\n</parameter>"
             extra.append({"role": "assistant", "content": f"<tool_call>\n<function=read_skill>\n{args}</function>\n</tool_call>"})
-            log(f"↻ SKILL BODY [{name}]", content[:500] + ("…" if len(content)>500 else ""))
             extra.append({"role": "user", "content": f"<tool_response>\n{content}\n</tool_response>"})
         prompt = build_prompt(body, extra=extra)
-        log("→ MLX (re-prompt tail)", prompt[-LOG_PROMPT_TAIL:])
-        raw = generate(prompt, max_tokens, temp, top_p)
-        log("← MLX RAW", raw)
+        raw    = generate(prompt, max_tokens, temp, top_p)
         blocks, stop_reason = parse_output(raw)
-        log("← PARSED", json.dumps(blocks, indent=2))
     stop_reason = "tool_use" if any(b.get("type")=="tool_use" for b in blocks) else "end_turn"
     return blocks, stop_reason
 
@@ -362,11 +349,10 @@ def blocks_to_sse(blocks, msg_id, stop_reason, in_tokens, out_tokens):
 
     return bytes(out)
 
-
 class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
-        print(f"  HTTP {fmt % args}", flush=True)
+        pass  
 
     def send_json(self, code, obj):
         body = json.dumps(obj).encode()
@@ -404,44 +390,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         body = self.read_json()
-        body["model"] = model_id   
+        body["model"] = model_id
 
         max_tokens = body.get("max_tokens", 8192)
         temp       = body.get("temperature", 0.7)
         top_p      = body.get("top_p", 0.9)
         msg_id     = f"msg_{uuid.uuid4().hex}"
 
-        tools_requested = [t["name"] for t in body.get("tools", [])]
-        last_msg = body.get("messages", [{}])[-1]
-        last_content = last_msg.get("content", "")
-        if isinstance(last_content, list):
-            last_content = " | ".join(
-                b.get("text", b.get("type","?"))[:80]
-                for b in last_content
-            )
-        tool_schemas = body.get("tools", [])
-        if len(body.get("messages", [])) <= 1:
-            tools_summary = json.dumps(tool_schemas, indent=2)
-        else:
-            tools_summary = str(tools_requested)
-
-        log("→ CC REQUEST", (
-            f"tools: {tools_summary}\n"
-            f"msgs:  {len(body.get('messages',[]))}\n"
-            f"last:  {str(last_content)[:200]}"
-        ))
-
         prompt = build_prompt(body)
-        log("→ MLX PROMPT (tail)", prompt[-LOG_PROMPT_TAIL:])
-
-        t0  = time.time()
-        raw = generate(prompt, max_tokens, temp, top_p)
-        dt  = time.time() - t0
-
-        log(f"← MLX RAW ({dt:.1f}s)", raw)
+        raw    = generate(prompt, max_tokens, temp, top_p)
 
         blocks, stop_reason = parse_output(raw)
-        log("← PARSED", json.dumps(blocks, indent=2))
 
         if any(b.get("type")=="tool_use" and b["name"]=="read_skill" for b in blocks):
             blocks, stop_reason = resolve_read_skill(blocks, body, max_tokens, temp, top_p)
@@ -450,13 +409,6 @@ class Handler(BaseHTTPRequestHandler):
         out_tokens = len(tokenizer.encode(raw))
 
         sse_bytes = blocks_to_sse(blocks, msg_id, stop_reason, in_tokens, out_tokens)
-
-        log("→ CC RESPONSE", (
-            f"stop_reason: {stop_reason}\n"
-            f"blocks: {[b['type'] for b in blocks]}\n"
-            f"tokens: {in_tokens} in / {out_tokens} out\n"
-            f"sse_bytes: {len(sse_bytes)}"
-        ))
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -475,32 +427,31 @@ def main():
     parser.add_argument("--port",   type=int, default=8000)
     parser.add_argument("--host",   default="127.0.0.1")
     parser.add_argument("--skills", action="append", metavar="DIR")
-    args = parser.parse_args()
+    args, claude_args = parser.parse_known_args()
 
     skill_dirs = args.skills or DEFAULT_SKILL_DIRS
     print("Scanning skills …", flush=True)
     skills = scan_skills(skill_dirs)
-    print(f"Found {len(skills)} skill(s).\n", flush=True)
 
     load_model(args.model)
 
+    server = HTTPServer((args.host, args.port), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
     print(f"🍎  mlx-claude-server  http://{args.host}:{args.port}")
-    print(f"    model  : {args.model}")
-    print(f"    skills : {len(skills)}")
-    print()
-    print("    Other terminal:")
-    print(f"      export ANTHROPIC_BASE_URL=http://{args.host}:{args.port}")
-    print( "      export ANTHROPIC_AUTH_TOKEN=local")
-    print(f"      export ANTHROPIC_MODEL={args.model}")
-    print(f"      export ANTHROPIC_SMALL_FAST_MODEL={args.model}")
-    print( "      claude")
+    print(f"    model : {args.model}")
+    print(f"    trace : {LOG_FILE}")
     print()
 
-    server = HTTPServer((args.host, args.port), Handler)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down.")
+    env = os.environ.copy()
+    env["ANTHROPIC_BASE_URL"]         = f"http://{args.host}:{args.port}"
+    env["ANTHROPIC_AUTH_TOKEN"]       = "local"
+    env["ANTHROPIC_MODEL"]            = args.model
+    env["ANTHROPIC_SMALL_FAST_MODEL"] = args.model
+
+    result = subprocess.run(["claude"] + claude_args, env=env)
+    sys.exit(result.returncode)
 
 if __name__ == "__main__":
     main()
