@@ -1,7 +1,6 @@
 # mlx-code: Local Claude Code for Mac
 
 <img width="1024" height="1536" alt="mlxcodelogo" src="https://github.com/user-attachments/assets/df605c1d-f8e7-433c-9aaf-176c73e3d628" />
-
 ![mlxcode](https://github.com/user-attachments/assets/86004bd2-549f-44b8-9a05-a9b6d9f1c4a2)
 
 ### Quick Start
@@ -25,159 +24,164 @@ pip install mlx-code
 | `exit` or `Ctrl+C` | Exit Claude Code | `exit` |
 
 <details><summary>Click to expand</summary><pre>
-╭─── Claude Code v2.1.74 ──────────────────────────────────────────────────────────────────────────────────╮
-│                                                    │ Tips for getting started                            │
-│                    Welcome back!                   │ Run /init to create a CLAUDE.md file with instruct… │
-│                                                    │ ─────────────────────────────────────────────────── │
-│                       ▐▛███▜▌                      │ Recent activity                                     │
-│                      ▝▜█████▛▘                     │ No recent activity                                  │
-│                        ▘▘ ▝▝                       │                                                     │
-│                                                    │                                                     │
-│ mlx-community/Qwen3.5-4B-Opti… · API Usage Billing │                                                     │
-│                  ~/Downloads/tmp                   │                                                     │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─── Claude Code v2.1.74 ────────────────────────────────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting started                          │
+│                    Welcome back!                   │ Run /init to create a CLAUDE.md file with instru… │
+│                                                    │ ───────────────────────────────────────────────── │
+│                       ▐▛███▜▌                      │ Recent activity                                   │
+│                      ▝▜█████▛▘                     │ No recent activity                                │
+│                        ▘▘ ▝▝                       │                                                   │
+│                                                    │                                                   │
+│ mlx-community/Qwen3.5-4B-Opti… · API Usage Billing │                                                   │
+│             /…/T/tmpg4sztu_h/workspace             │                                                   │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-❯ list the files in this directory and explain what each one does
+❯ explain the folder structure
 
-⏺ The user wants to understand the files in the current directory, so I'll use the Glob tool to list all files first.
-
-⏺ Searched for 1 pattern (ctrl+o to expand)
-
-⏺ I need to fix the Glob tool call - the parameter should be pattern, not key.
+⏺
 
 ⏺ Searched for 1 pattern (ctrl+o to expand)
 
-⏺ The user wants me to explain what each file does. I should organize these by project directory and explain the purpose of each file. Let me read a few key files to provide accurate explanations.
+⏺ Here's the folder structure of your workspace:
 
-  This directory contains several project folders. Let me explain each one:
+  workspace/
+  ├── .DS_Store
+  ├── cache/
+  │   └── cache.safetensors
+  ├── cc/
+  │   ├── .DS_Store
+  │   ├── mlx-code-v1.py
+  │   └── mlx-code-v2.py
+  ├── cyberpunk/
+  │   ├── build.zig
+  │   ├── help.py
+  │   ├── map.c
+  │   └── main.zig
+  ├── rag/
+  │   └── jina.py
+  ├── rts/
+  │   ├── build.zig
+  │   ├── main.zig
+  │   └── battle_sim.c
+  ├── splat_zig_raylib/
+  │   ├── README.md
+  │   ├── .DS_Store
+  │   ├── build.zig
+  │   ├── build_web.sh
+  │   ├── index.html
+  │   ├── main.zig
+  │   ├── gsplat_transform.py
+  │   ├── src/
+  │   │   └── main.zig
+  │   └── splat_zig/
+  │       ├── .DS_Store
+  │       ├── build.zig
+  │       ├── build_web.sh
+  │       ├── gsplat_transform.py
+  │       ├── index.html
+  │       ├── main.zig
+  │       └── splat/
+  │           └── build.zig
+  ├── tarot/
+  │   ├── index.html
+  │   └── tarot.py
+  └── tmp.md
 
-  Main Projects
+  Summary of projects:
 
-  cyberpunk/
+  ┌───────────────────┬────────────────────────────────────────────┐
+  │      Folder       │                  Purpose                   │
+  ├───────────────────┼────────────────────────────────────────────┤
+  │ cc/               │ MLX code versions (v1, v2)                 │
+  ├───────────────────┼────────────────────────────────────────────┤
+  │ cyberpunk/        │ Zig game project with C map integration    │
+  ├───────────────────┼────────────────────────────────────────────┤
+  │ rag/              │ RAG (Retrieval-Augmented Generation) setup │
+  ├───────────────────┼────────────────────────────────────────────┤
+  │ rts/              │ Real-time strategy battle simulation       │
+  ├───────────────────┼────────────────────────────────────────────┤
+  │ splat_zig_raylib/ │ Raylib game with splat transform features  │
+  ├───────────────────┼────────────────────────────────────────────┤
+  │ tarot/            │ Tarot card application                     │
+  ├───────────────────┼────────────────────────────────────────────┤
+  │ cache/            │ Model cache files                          │
+  ├───────────────────┼────────────────────────────────────────────┤
+  │ tmp.md            │ Temporary notes                            │
+  └───────────────────┴────────────────────────────────────────────┘
 
-  - main.zig - Main entry point for a Zig-based cyberpunk project
-  - build.zig - Build configuration file for Zig
-  - map.c - C source file, likely for map rendering or game logic
-  - help.py - Python helper script, possibly for documentation or utilities
+❯ how is output parsed in mlx-code.py?
 
-  rts/
-
-  - main.zig - Main entry point for a real-time strategy (RTS) game in Zig
-  - build.zig - Build configuration for Zig
-  - battle_sim.c - C file for battle simulation logic
-
-  splat_zig_raylib/
-
-  - main.zig (two versions - one in splat_zig/, one in root) - Main entry point for a Raylib-based game
-  - build.zig - Build configuration
-  - gsplat_transform.py - Python script for splat transform calculations
-  - index.html - Web entry point for the game
-  - build_web.sh - Shell script for building web version
-  - README.md - Project documentation
-
-  tarot/
-
-  - tarot.py - Python script for tarot-related functionality
-  - index.html - Web entry point
-
-  yorha/
-
-  - index.html - Web entry point (likely a simple web page)
-
-  jina.py
-
-  - jina.py - Python script, possibly related to Jina AI or a utility
-
-  mlx-code-v1.py & mlx-code.py
-
-  - These appear to be different versions of the mlx-code agent wrapper (the local Claude Code-style agent for Apple Silicon)
-
-  tmp.md
-
-  - tmp.md - Temporary markdown file (contents unknown)
-
-  mlx_trace.log
-
-  - mlx_trace.log - Trace log file from the mlx model runtime
-
-  .DS_Store files
-
-  - macOS metadata files (can be ignored)
-
-  ---
-  Summary: This is a temporary download folder (/Users/jjms/Downloads/tmp) containing multiple small projects:
-  - Game projects in Zig (cyberpunk, RTS, Raylib-based game)
-  - Python scripts for various utilities
-  - Web entry points (HTML files)
-  - Build configurations (Zig build files)
-
-  The Zig projects appear to be the main focus, with game-related code and build systems.
-
-✻ Brewed for 42s
-
-❯ explain how output is parsed in mlx-code.py
-
-⏺ The user wants to understand how output is parsed in mlx-code.py, so I need to read that file first to understand its structure and find the output parsing logic.
-
-⏺ Read 1 file (ctrl+o to expand)
-
-⏺ I need to fix the Read tool call - it should use file_path not key.
+⏺
 
 ⏺ Read 1 file (ctrl+o to expand)
 
-⏺ Now I have the full file. Let me explain the output parsing logic, which is the key part the user asked about.
-
-
-  The output parsing logic is in the parse_output(raw: str) function (lines 233-315). Here's how it works:
+⏺ Based on the code, here's how output is parsed in mlx-code.py:
 
   Output Parsing Flow
 
-  1. Extract Thinking Blocks (lines 237-244)
+  1. decode() function (lines 109-143)
 
-  First, it extracts any `
+  This is the core parsing function that converts raw model output into structured blocks:
 
-⏺ The output parsing logic is in the parse_output(raw: str) function (lines 233-315). Here's how it works:
+  - Input: Raw text from the model
+  - Output: List of blocks with types: thinking, text, or tool_use
 
-  Output Parsing Flow
+  Key parsing logic:
+  - Splits text by `
 
-  1. Extract Thinking Blocks (lines 237-244)
+⏺ ` markers for thinking content
+  - Extracts tool calls wrapped in <tool_call>...</tool_call> tags
+  - Parses function name and parameters from XML-like tags
 
-  First, it extracts any `
+  2. Tool Call Extraction (lines 125-141)
 
-⏺ ` blocks by finding the earliest occurrences of both markers and splitting them out:
-  while "
+  When parsing tool calls:
+  tool_pattern = re.compile(r'<tool_call>(.*?)</tool_call>', re.DOTALL)
+  - Matches content between <tool_call> and </tool_call>
+  - Extracts function name: <function=name>
+  - Extracts parameters: <parameter=name>value</parameter>
+  - Creates tool_use block with:
+    - type: "tool_use"
+    - id: UUID
+    - name: function name
+    - input: params dict
 
-⏺ " in remaining:
-      s = remaining.index("
+  3. blocks_to_sse() function (lines 145-177)
 
-⏺ ")
-      # Extract thinking block
-      remaining = remaining[e + 8:].strip()
+  Converts parsed blocks to Server-Sent Events (SSE) format:
 
-  ### 2. **Extract Tool Use Blocks** (lines 247-289)
-  It searches for `<tool_call>...</tool_call>` markers and tries to parse the content:
-  - **First attempt**: Try parsing as JSON with `name` or `tool` field
-  - **Fallback**: Parse as XML-like format with `<function=...>` and `<parameter=...>` tags
-  - Creates tool blocks with `type: "tool_use"`, unique ID, name, and input
+  def event(name: str, data: dict) -> bytes:
+      return f"event: {name}\ndata: {json.dumps(data)}\n\n".encode()
 
-  ### 3. **Handle JSON Tool Response** (lines 291-311)
-  If no `<tool_call>...</tool_call>` blocks were found, it checks if the remaining output is a JSON object with `name` field (indicating a tool response).
+  Event types sent:
+  - message_start - Initial message header
+  - content_block_start - Start of a content block
+  - content_block_delta - Streaming content (text/thinking/tool)
+  - content_block_stop - End of block
+  - message_delta - Stop reason
+  - message_stop - End of message
 
-  ### 4. **Return Result** (line 315)
-  Returns a tuple of `(blocks, stop_reason)`:
-  - `blocks`: List of parsed blocks (`{"type": "text"}`, `{"type": "thinking"}`, `{"type": "tool_use"}`)
-  - `stop_reason`: `"tool_use"` if tools were detected, `"end_turn"` otherwise
+  4. HTTP Response (lines 288-297)
 
-  ## Key Patterns Used
+  Sends SSE stream with headers:
+  self.send_header("Content-Type", "text/event-stream")
+  self.send_header("Cache-Control", "no-cache")
 
-  | Pattern | Purpose |
-  |---------|---------|
-  | `
+  5. Endpoint (/v1/messages)
 
-⏺ | Thinking block markers | |...| Tool invocation markers | | JSON withname/tool| Tool response format | |<function=...>/<parameter=...>` | Alternative tool format |
+  - POST request with JSON body
+  - Returns streaming SSE response
+  - Supports max_tokens parameter
 
-  The parser is designed to handle both the tool invocation format (<tool_call>...</tool_call>) and tool response format (JSON with name field) used by the system.
+  6. Stop Reason Detection
 
-✻ Worked for 1m 9s
+  - tool_use - If tool calls were generated
+  - end_turn - If just text/thinking was generated
+
+✻ Brewed for 35s
+
+❯ cool mate, bye
+
+⏺ Got it! Feel free to come back anytime if you need help. Have a great day! 👋
 </pre></details><br>
 
