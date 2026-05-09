@@ -1,14 +1,40 @@
 # mlx-code
 
+A lightweight coding agent for Mac, built on Apple's MLX framework. Fast local inference, built-in prompt caching, robust tool-calling.
+
 [![Link](https://raw.githubusercontent.com/JosefAlbers/mlx-code/main/assets/mlx-code.gif)](https://youtu.be/bizPhrHL1_w)
 
-A lightweight, powerful Coding Agent for Mac. Built on top of Apple's MLX framework, `mlx-code` provides fast, local inference with built-in prompt caching and robust tool-calling capabilities. 
+Modern coding agents are like luxury apartments: impressive and shiny, but you don't hold the deed. The company behind the tool can raise the rent, change the features, or change the locks whenever they please.
 
-### Features
+I wanted a [backyard shed](https://poyo.co/note/20260202T150723/) for myself. Something I understand end to end, can break on purpose, and fix without filing a support ticket.
 
-*   **Multi-Provider Compatibility**: Seamlessly translates and handles requests formatted for **Claude**, **Gemini**, **Codex**, and **DeepSeek**.
-*   **Built-in REPL & Tools**: Comes with `pie`, a fully-featured REPL with tool execution and reasoning token support.
-*   **Server Mode**: Easily spin up a local LLM server.
+mlx-code is that shed. It’s deliberately minimal, extremely transparent, and designed around one core idea: the feedback [loop](https://www.robert-glaser.de/what-if-iteration-is-all-we-need/) is the thing that matters, not the interface around it. The tighter and faster you can close the loop between intent and output, the better the work gets. Everything else is ceremony. 
+
+So the terminal stays the interface. Text in, text out. No full-screen TUI fighting your terminal emulator, no proprietary context format, no behavior that shifts between versions. 
+
+**Just a loop you control, composed from Unix primitives you already know.**
+
+## How It Works
+
+mlx-code has two lightweight, loosely coupled pieces:
+
+- **main.py**: A clean MLX server for Apple Silicon. It loads quantized models and exposes a standard OpenAI-compatible completions endpoint.
+- **pie.py** — A minimal but powerful agent harness (Python port of Mario Zechner's awesome [pi](https://github.com/badlogic/pi-mono)).
+
+The CLI is intentionally boring and familiar:
+
+- `mc` — Local agent (MLX server + pie REPL)
+- `me` — Remote agent (pie REPL against Claude, DeepSeek, Gemini, etc.)
+- `md` — View and filter structured JSON logs
+
+Agentic work lives on a spectrum from tight, synchronous co-driving to loose, asynchronous delegation — the right tool for both ends is a loop that closes quickly, not a UI that abstracts it away. Text streams compose. They pipe. They chain. They work the same way they did thirty years ago and will work thirty years from now. That's the constraint that shapes the whole tool.
+
+## Features
+
+- **Multi-Provider Compatibility**: Translates and handles requests formatted for Claude, Gemini, Codex, and DeepSeek.
+- **Built-in REPL & Tools**: `pie` is a fully-featured REPL with tool execution and reasoning token support.
+- **Prompt Caching**: KV cache is saved to disk and reused across requests automatically.
+- **Server Mode**: Spin up a local LLM server with one command.
 
 ### Quick Start
 
@@ -19,230 +45,541 @@ pip install mlx-code
 mc
 ```
 
-### Command Line Interfaces
+## Command Line Interfaces
 
-The package installs three primary command-line tools:
-- mc (Main/Server): Launches the local LLM API server (defaults to 127.0.0.1:8000).
-- me (TUI/Harness): Runs the interactive pie chat REPL.
-
-### Options
-
-You can customize the model, server, and behavior using command-line flags.
+### `mc` — Local agent (MLX server + harness)
 
 ```bash
-# Use Gemini CLI as the harness
-mc --harness gemini 
+# Default: starts local MLX server and launches pie REPL
+mc
 
-# Use a custom local LLM backend
+
+# Choose a different harness
+mc --leash gemini
+mc --leash codex
+mc --leash claude
+mc --leash pie 
+
+# Use a local model
 mc --model mlx-community/Qwen3.5-4B-OptiQ-4bit
+mc --leash none       # server only, no harness
 
-# Use DeepSeek V4 Flash API
-me --deepseek
+# Change server address
+mc --host 0.0.0.0 --port 9000
 
-# Run the server only
-mc --nocc
+# Limit available tools
+mc --tools Ls ReadTree Edit
 
-# General shell piping and chaining works too
+# Shell piping and chaining
 echo "explain symgraph.py" | mc -d | cat - PLAN.md | mc
 ```
-*(For a full list of mc server arguments, run mc --help)*
 
-### Credits
+### `me` — Remote agent (pie REPL against any API)
 
-- `main.py`: Built on [MLX](https://github.com/ml-explore/mlx) and [MLX LM](https://github.com/ml-explore/mlx-lm) by Apple.
+```bash
+# Default: connects to local server at 127.0.0.1:8000
+me
+
+# Use a remote provider
+me --api deepseek
+me --api claude
+me --api gemini
+me --api codex
+
+# Use a specific model
+me --api deepseek --model deepseek-chat
+
+# Point at a custom endpoint
+me --url http://localhost:9000
+```
+
+### `md` — Log viewer
+
+View and filter structured JSON logs from any session.
+
+```bash
+md
+md --filter lvl:10;file:main,pie
+md --out picks
+```
+
+## Credits
+
+- `main.py`: Built on [mlx](https://github.com/ml-explore/mlx) and [mlx-lm](https://github.com/ml-explore/mlx-lm) by Apple.
 - `pie.py`: Adapted from [pi](https://github.com/badlogic/pi-mono) by Mario Zechner (MIT License).
 
-### Licence
+## Licence
 
 Apache License 2.0 — see LICENSE for details.
 
 <details><summary>...</summary><pre>
 
-~/D/tmp> mc
+~/tmp> mc
+
     pie REPL  •  type /help for commands, Ctrl-D or 'exit' to quit.
 
-    ≫ explain symgraph.py
-    π The user wants me to explain symgraph.py. I should first look at the file to understand its contents. Let me use the ReadAST function to inspect this file.
+    ≫ hi
+    π The user is just saying "hi" - this is a simple greeting. I should respond in a friendly way and offer to help them with something.
+    Hello! How can I help you today?
+    ≫ how many files in current dir?
+    π The user wants to know how many files are in the current directory. I can use the Ls function to list the directory contents and count the files.
+    Ls
+    Looking at the directory listing, I can see:
+    - LICENSE (file)
+    - README.md (file)
+    - cache/ (directory)
+    - log.json (file)
+    - mlx_code/ (directory)
+    - mlx_code.egg-info/ (directory)
+    - setup.py (file)
 
-    ReadAST {"path": "symgraph.py"} This looks like a Python file that defines a graph-based system for analyzing code. Let me get more details about the main components by looking up the key symbols.
+    So there are 4 files and 3 directories in the current directory.
+    There are **4 files** in the current directory:
+    - LICENSE
+    - README.md
+    - log.json
+    - setup.py
 
-    ReadAST {"path": "symgraph.py", "symbols": "[\"Edge\", \"Graph\", \"DefCollector\", \"TypeInfo\", \"TypeInferrer\", \"EdgeEmitte This is a comprehensive Python file that builds a symbolic graph representation of Python code. Let me provide a clear explanation of what this file does.
-
-    ## Overview
-
-    `symgraph.py` is a **symbolic graph builder** for Python code that constructs a directed graph representation of Python modules, classes, functions, and their relationships. It uses Python's `ast` (Abstract Syntax Tree) module to analyze code and build a graph where nodes are symbols and edges represent relationships like calls and references.
-
-    ## Key Components
-
-    ### 1. **Edge** (47-60)
-    Represents relationships between symbols:
-    - `src`, `dst`: source and destination symbols
-    - `kind`: "call" or "ref" (call or reference)
-    - `via`: optional alias/variable name for indirect references
-
-    ### 2. **Graph** (67-167)
-    The main graph structure that stores:
-    - `symbols`: list of all discovered symbols
-    - `edges`: list of all relationships
-    - Internal indexes for efficient lookup (`_sym_by_qname`, `_uses`, `_used_by`)
-
-    ### 3. **DefCollector** (186-238)
-    First pass visitor that collects all definitions:
-    - Classes, functions, methods, module-level variables
-    - Tracks scope (class/function nesting)
-    - No type inference, just definition collection
-
-    ### 4. **TypeInferrer** (253-464)
-    Second pass that infers types using **fixpoint iteration**:
-    - Tracks local variable types per scope
-    - Resolves return types from annotations
-    - Handles class instances and method calls
-    - Uses `ast.NodeVisitor` with proper scope tracking
-
-    ### 5. **EdgeEmitter** (471-700)
-    Third pass that emits edges based on type information:
-    - Emits "call" edges for function/method calls
-    - Emits "ref" edges for variable references
-    - Handles `__call__` for class instances
-    - Tracks live local variable environments
-
-    ### 6. **build()** (730-755)
-    Main entry point that orchestrates the three passes:
-    1. Collect definitions
-    2. Infer types (fixpoint)
-    3. Emit edges
-
-    ### 7. **main()** (762-776)
-    CLI interface:
-    - `symgraph.py <path>` → outputs all edges as JSON
-    - `symgraph.py <path> <query>` → queries for symbols matching a name
-
-    ## How It Works
-
-    ```
-    ┌─────────────────────────────────────────────────────────────┐
-    │  Pass 1: DefCollector                                       │
-    │  └─ Collects all symbols (classes, functions, variables)    │
-    └─────────────────────────────────────────────────────────────┘
-                                  ↓
-    ┌─────────────────────────────────────────────────────────────┐
-    │  Pass 2: TypeInferrer (fixpoint)                            │
-    │  └─ Infers types, return types, class instances             │
-    └─────────────────────────────────────────────────────────────┘
-                                  ↓
-    ┌─────────────────────────────────────────────────────────────┐
-    │  Pass 3: EdgeEmitter                                        │
-    │  └─ Emits call/ref edges based on type info                 │
-    └─────────────────────────────────────────────────────────────┘
-    ```
-
-    ## Use Cases
-
-    This tool is useful for:
-    - **Dependency analysis** - understand call graphs and dependencies
-    - **Code navigation** - find where symbols are used
-    - **Refactoring** - understand impact of changes
-    - **Static analysis** - detect unused code, circular dependencies
-
-    The graph can be queried to find all uses of a symbol, all callers, or all references within a module.
-    ≫ Add a method to Graph called clear_edges() that resets edges, _edge_keys, _uses, and _used_by to empty.
-    π The user wants me to add a `clear_edges()` method to the `Graph` class that resets the edges and related internal structures. I need to:1. Add the method to the Graph class2. Reset `self.edges`, `self._edge_keys`, `self._uses`, and `self._used_by` to emptyLet me first read the Graph class to see its current structure, then add the method.
-
-    Edit {"path": "symgraph.py", "old_text": "# \u2500\u2500 query \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u The edit was successful. Let me verify the change by reading the updated section of the file to confirm the method was added correctly.
-
-    ReadAST {"path": "symgraph.py", "symbols": "[\"Graph\"]"} The edit was successful. The `clear_edges()` method has been added to the `Graph` class. It resets:- `self.edges` - the list of edges- `self._edge_keys` - the set of edge keys (to prevent duplicate edges)- `self._uses` - the dictionary tracking which symbols use which edges- `self._used_by` - the dictionary tracking which symbols are used by which edgesThe symbols list is NOT cleared, which makes sense since we want to keep the symbol definitions but just clear the edges.Let me provide a summary of what was added.
-
-    Done! I've added the `clear_edges()` method to the `Graph` class. Here's what it does:
-
-    ```python
-    def clear_edges(self) -> None:
-        """Reset all edges and related internal structures."""
-        self.edges.clear()
-        self._edge_keys.clear()
-        self._uses.clear()
-        self._used_by.clear()
-    ```
-
-    This method:
-    - Clears all edges from the graph
-    - Resets the edge key set (prevents duplicate edges)
-    - Clears the `_uses` mapping (which symbols use which edges)
-    - Clears the `_used_by` mapping (which symbols are used by which edges)
-
-    **Note:** It does NOT clear `self.symbols` or `self._sym_by_qname`, so symbol definitions are preserved while only the edge relationships are reset. This is useful for:
-    - Re-running edge emission on the same symbols
-    - Building multiple graphs from the same codebase
-    - Resetting the graph state without losing collected definitions
-    ≫ exit
+    And **3 directories**:
+    - cache/
+    - mlx_code/
+    - mlx_code.egg-info/
+    ≫
     Bye!
-    ~/D/tmp> gg *.py
-    staging: log.py
+
+~/tmp> gg **/*.py
+
+    staging: mlx_code/__init__.py
       exists
-    staging: main.py
+    staging: mlx_code/log.py
       exists
-    staging: pie.py
+    staging: mlx_code/main.py
       exists
-    staging: symgraph.py
+    staging: mlx_code/pie.py
+      exists
+    staging: mlx_code/symgraph.py
+      exists
+    staging: setup.py
       exists
 
     Diff preview:
-     Users/jjms/Downloads/tmp/symgraph.py | 7 +++++++
-     1 file changed, 7 insertions(+)
+     mlx_code/__init__.py |    4 +
+     mlx_code/log.py      |  771 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+     mlx_code/main.py     | 1597 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+     mlx_code/pie.py      | 1994 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+     mlx_code/symgraph.py |  483 +++++++++++++++++++++++++++++++++++
+     setup.py             |   18 ++
+     6 files changed, 4867 insertions(+)
 
-    Show per-file diffs? [s=skip]: s
+    Show per-file diffs? [s=skip]: y
 
-    read> symgraph edit by mlx-code
-    Saved snapshot 09529bc9bcbc6d1ff761618c982ece9a290f50fb
+    --- mlx_code/__init__.py ---
+    @@ -0,0 +1,4 @@
+    +from .main import serve, run
+    +from .pie import harness
+    +
+    +__all__ = ["serve", "run", "harness"]
+    --- mlx_code/log.py ---
+    ... (     772 lines total, truncated)
+    +    if args.out:
+    +        with open(args.out, "w", encoding="utf-8") as f:
+    +            for idx in sorted(marked):
+    +                f.write(json.dumps(logs[idx]) + "\n")
+    +    else:
+    +        for idx in sorted(marked):
+    +            print(json.dumps(logs[idx]))
+    +
+    +if __name__ == "__main__":
+    +    main()
+    --- mlx_code/main.py ---
+    ... (    1598 lines total, truncated)
+    +            model=args.model,
+    +            system=system,
+    +            tools=args.tools,
+    +            skill=args.skill,
+    +            leash_args=leash_args,
+    +        )
+    +
+    +if __name__ == "__main__":
+    +    main()
+    +# }}}ser
+    --- mlx_code/pie.py ---
+    ... (    1995 lines total, truncated)
+    +        cwd=args.cwd,
+    +        model=model,
+    +        base_url=url,
+    +        tools=tools,
+    +        sdir=args.skill,
+    +        api_key=api_key
+    +    )
+    +
+    +if __name__ == "__main__":
+    +    main()
+    --- mlx_code/symgraph.py ---
+    ... (     485 lines total, truncated)
+    +       B,H=search_symbols(A.symbols,C,lang_ext=E,include_references=not A.no_references,include_context=A.context,warn_skipped=A.warn_skipped);G=_C
+    +       for(I,J)in H.items():
+    +               if J is Capability.NONE:_warn(f"'{I}': no matching identifiers found (grammar may be unsupported for this file type)");G=_E
+    +       if A.kinds:B=[B for B in B if B.kind in A.kinds]
+    +       if A.json:print(json.dumps([A.as_dict()for A in B],indent=2))
+    +       else:print_usages(B,F)
+    +       if G and not B:return 2
+    +       return 0
+    +if __name__=='__main__':sys.exit(main())
+    \ No newline at end of file
+    --- setup.py ---
+    ... (      19 lines total, truncated)
+    +    version="0.0.7",
+    +    readme="README.md",
+    +    description="Coding Agent for Mac",
+    +    long_description=open("README.md").read(),
+    +    long_description_content_type="text/markdown",
+    +    python_requires=">=3.12.8",
+    +    install_requires=["mlx-lm>=0.31.3", "numpy", "httpx", "pydantic"],
+    +    packages=find_packages(),
+    +    entry_points={"console_scripts": ["mc=mlx_code.main:main", "md=mlx_code.log:main", "me=mlx_code.pie:main"]},
+    +)
 
-~/D/tmp> md
+    read> v0.0.7
+    Saved snapshot d2ab186ee5c02f0589552ffac658c4f4a284b36c
+
+~/tmp> mc
+
+    pie REPL  •  type /help for commands, Ctrl-D or 'exit' to quit.
+
+    ≫ explain sittree.py
+    π The user is asking me to explain a file called "sittree.py". I should first read this file to understand what it does. Let me use the Read function to read the file.
+    Read {"path": "sittree.py"}
+    This is a comprehensive file. Let me provide a clear explanation of what this file does.
+    # sittree.py — Symbol Usage Finder & Codebase Outliner
+
+    This is a **tree-sitter-based code analysis tool** for coding agents. It provides two main capabilities:
+
+    ## 🎯 Core Features
+
+    ### 1. **Codebase Outlining**
+    Shows all top-level symbols (functions, classes, variables, types, etc.) in a file or directory.
+
+    **Usage:**
+    ```bash
+    python sittree.py <path>              # Outline symbols
+    python sittree.py <path> --depth 2    # Include nested symbols
+    python sittree.py <path> --context    # Show source context
+    ```
+
+    ### 2. **Symbol Search**
+    Finds all usages of specific symbols across a codebase.
+
+    **Usage:**
+    ```bash
+    python sittree.py <path> myFunc myClass  # Search for symbols
+    python sittree.py <path> myFunc --kinds definition  # Filter by kind
+    ```
+
+    ## 📋 Supported Languages
+
+    | Extension | Language |
+    |-----------|----------|
+    | `.py` | Python |
+    | `.js`, `.jsx`, `.ts`, `.tsx` | JavaScript/TypeScript |
+    | `.go` | Go |
+    | `.rs` | Rust |
+    | `.java` | Java |
+    | `.c`, `.cpp`, `.cc`, `.cs` | C/C++/C# |
+    | `.rb` | Ruby |
+    | `.php` | PHP |
+    | `.swift`, `.kt` | Swift/Kotlin |
+    | `.lua`, `.hs`, `.ex`, `.exs` | Lua/Haskell/Elixir |
+    | `.r`, `.sh` | R/Bash |
+    | `.toml`, `.yaml`, `.yml` | Config files |
+
+    ## 🔍 Key Capabilities
+
+    ### Symbol Kinds Detected
+    - **definition** — Function/class/type definitions
+    - **assignment** — Variable declarations
+    - **call** — Function/method calls
+    - **import** — Import statements
+    - **reference** — Bare identifier references
+
+    ### Language-Specific Features
+    - **Python**: Handles `__main__` entry points, decorated functions, augmented assignments
+    - **JavaScript/TypeScript**: Handles ES6+ features (arrow functions, destructuring, type aliases)
+    - **Go**: Handles methods, type specs, package-level declarations
+    - **Rust**: Handles traits, structs, enums, visibility modifiers
+    - **Java**: Handles classes, interfaces, enums, method invocations
+
+    ## 🛠️ Technical Details
+
+    ### Tree-Sitter Integration
+    - Uses **bespoke queries** for languages with rich grammar support
+    - Falls back to **generic identifier scanning** for simpler languages
+    - Caches parsers and queries for performance
+
+    ### Output Formats
+    - **Human-readable**: Color-coded with line numbers and context
+    - **JSON**: Machine-parseable output via `--json` flag
+    - **Raw**: Paste-safe source bodies for editing
+
+    ### Advanced Features
+    - **Context snippets**: Show surrounding source lines
+    - **Entry point detection**: Identify `main()`, `__main__`, etc.
+    - **Export detection**: Find public/exported symbols
+    - **Destructuring binding extraction**: Handle complex patterns like `[a, b]` or `{x, y}`
+
+    ## 💡 Use Cases
+
+    1. **Codebase exploration**: Get an overview of a project's structure
+    2. **Symbol search**: Find all usages of a function/class
+    3. **Refactoring support**: Locate all references before renaming
+    4. **Documentation generation**: Extract API surface information
+    5. **Agent assistance**: Provide context for code review/editing tasks
+
+    ## ⚙️ Configuration Options
+
+    | Option | Description |
+    |--------|-------------|
+    | `--lang` | Override language detection |
+    | `--depth` | Max nesting depth for outline |
+    | `--context` | Include source context |
+    | `--no-references` | Skip bare identifier hits |
+    | `--kinds` | Filter by symbol kind |
+    | `--warn-skipped` | Show grammar load errors |
+
+    ---
+
+    This tool is designed to work seamlessly with coding agents, providing structured code analysis that's both human-readable and machine-parseable.
+    ≫
+    Bye!
+
+~/tmp> mc --tools ReadTree
+
+    pie REPL  •  type /help for commands, Ctrl-D or 'exit' to quit.
+
+    ≫ explain sittree.py
+    π The user is asking me to explain sittree.py. I should first read this file to understand what it does. Let me use the ReadTree function to inspect this file.
+    ReadTree {"path": "sittree.py"}
+    This is a Python file that appears to be a tool for inspecting source code using tree-sitter. It has various functions for handling different programming languages (Python, JS, Go, Rust, Java), extracting bindings, finding symbols, and printing outlines. Let me read the full file to provide a comprehensive explanation.
+    ReadTree {"path": "sittree.py", "depth": "2"}
+    I need to read the actual file content to understand what it does. Let me read the file directly.
+    ReadTree {"path": "sittree.py", "symbols": "[\"main\", \"SymbolFinder\", \"Capability\", \"outline_path\", \"search_symbols\", \"print_outline\"]"}
+    Now I have a good understanding of the file. Let me provide a comprehensive explanation of what sittree.py does.
+    # sittree.py - Source Code Tree Inspector
+
+    This is a **tree-sitter-based source code analysis tool** that can inspect, search, and outline code across multiple programming languages. It's designed to work with the tree-sitter parser library for accurate AST (Abstract Syntax Tree) parsing.
+
+    ## 🎯 Main Features
+
+    ### 1. **Symbol Search**
+    - Find specific symbols (functions, classes, variables, etc.) in source files
+    - Supports multiple programming languages: Python, JavaScript, TypeScript, Go, Rust, Java
+    - Can search directories recursively
+    - Includes reference tracking and context lines
+
+    ### 2. **Code Outlining**
+    - Generate hierarchical outlines of files/directories
+    - Shows entry points, exported symbols, and line ranges
+    - Supports depth limiting for large projects
+
+    ### 3. **Multi-Language Support**
+    - Uses bespoke queries for Python, JS, Go, Rust, Java
+    - Falls back to generic identifier scanning when no bespoke query exists
+    - Handles UTF-8 encoding issues with proper character decoding
+
+    ## 📦 Key Components
+
+    ### **Capability Enum**
+    ```python
+    class Capability(str, Enum):
+        FULL    = "full"     # Bespoke queries with correct semantics
+        PARTIAL = "partial"  # Generic identifier scan (kind is always 'reference')
+        NONE    = "none"     # Grammar has no identifier-like nodes
+    ```
+
+    ### **SymbolFinder Class**
+    - Core class for searching symbols in files
+    - Handles symbol matching with proper UTF-8 decoding
+    - Groups results by original symbol name
+    - Supports references and context inclusion
+
+    ### **Main Functions**
+    - `outline_path()`: Recursively outline files/directories
+    - `search_symbols()`: Search for multiple symbols in a file/directory
+    - `print_outline()`: Display formatted code outlines
+    - `print_usages()`: Display symbol usage information
+
+    ## 🚀 Command-Line Usage
+
+    ```bash
+    # Outline mode - show code structure
+    python sittree.py /path/to/file --lang py
+
+    # Search mode - find symbols
+    python sittree.py /path/to/file --symbols "my_function" --lang py
+
+    # Search in directory
+    python sittree.py /path/to/dir --symbols "class" --lang py
+
+    # JSON output
+    python sittree.py /path/to/file --symbols "my_function" --json
+    ```
+
+    ## 🔧 Technical Details
+
+    ### **Query System**
+    - Uses tree-sitter queries for precise symbol matching
+    - Supports `definition`, `assignment`, `call`, and `import` kinds
+    - Has priority ordering for different node kinds
+
+    ### **Language Extensions**
+    - Maps file extensions to language packages
+    - Supports both extension-based and explicit language specification
+    - Handles files with unexpected extensions when `--lang` is specified
+
+    ### **Error Handling**
+    - Returns exit code 2 for grammar failures (distinct from path errors)
+    - Warns when grammars are unavailable for certain file types
+    - Handles non-UTF-8 source files gracefully
+
+    ## 💡 Use Cases
+
+    1. **IDE Integration**: Provides the foundation for a code search/outline feature
+    2. **Static Analysis**: Find symbols across large codebases
+    3. **Documentation Generation**: Create code structure maps
+    4. **Refactoring Support**: Locate all usages of a symbol before renaming
+
+    The tool is particularly useful for developers who need precise, language-aware code navigation and search capabilities without relying on IDE-specific features.
+
+~/tmp> python log.py -o test
 
     ┌─ logs ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐┌─ detail ──────────────────────────────────────────────────────────────────────────┐
-    │ TIME      LVL       FILE              FUNC              MESSAGE                                                            …││ time       : 2026-05-05T20:55:26.707364+00:00                                     │
-    │ 20:55:21  INFO      main.py           main              args=Namespace(model='mlx-community/Qwen3.5-4B-OptiQ-4bit', api='de…││ level      : INFO                                                                 │
-    │ 20:55:26  INFO      pie.py            _repl             explain symgraph.py                                                 ││ logger     : root                                                                 │
-    │ 20:55:26  INFO      main.py           do_POST           self.path='/v1/chat/completions' { "model": "jj", "max_tokens": 819…││ file       : tmp/main.py                                                          │
-    │ 20:55:26  DEBUG     main.py           translate         messages=[Message(role='system', content='You are a helpful assista…││ function   : do_POST                                                              │
-    │ 20:55:26  INFO      main.py           encode            ckpts=[742] <|im_start|>system # Tools You have access to the follo…││ line       : 1432                                                                 │
-    │ 20:55:26  INFO      main.py           __call__          ckpts=[742] len(prompt)=753 len(self.hx)=0 cl=0                     ││ id         : bdedc2c5-00a5-49od-9bj9-890a6e2a89b1                                 │
-    │ 20:55:26  DEBUG     main.py           load              cache/mlxcommunityQwen354BOptiQ4bit_742_3bb19df63c78dde8.safetensor…││                                                                                   │
-    │ 20:55:27  DEBUG     main.py           generate          pmt Processed 753 input tokens in 0 seconds (4684 tokens per second…││ ── message ──                                                                     │
-    │ 20:55:27  INFO      main.py           generate          gen The user wants me to explain symgraph.py. I should first look a…││ self.path='/v1/chat/completions'                                                  │
-    │ 20:55:27  DEBUG     pie.py            _loop             AssistantMessage(content=[ThinkingContent(thinking='The user wants …││ {                                                                                 │
-    │ 20:55:27  DEBUG     pie.py            on_event           symgraph.py ─────────────── [C] Symbol (32-43) [C] Edge (47-60) [C…││   "model": "jj",                                                                  │
-    │ 20:55:28  INFO      main.py           do_POST           self.path='/v1/chat/completions' { "model": "jj", "max_tokens": 819…││   "max_tokens": 8192,                                                             │
-    │ 20:55:28  DEBUG     main.py           translate         messages=[Message(role='system', content='You are a helpful assista…││   "messages": [                                                                   │
-    │ 20:55:28  INFO      main.py           encode            ckpts=[742] <|im_start|>system # Tools You have access to the follo…││     {                                                                             │
-    │ 20:55:28  INFO      main.py           __call__          ckpts=[742] len(prompt)=1015 len(self.hx)=818 cl=818                ││       "role": "system",                                                           │
-    │ 20:55:28  DEBUG     main.py           __call__          cont                                                                ││       "content": "You are a helpful assistant."                                   │
-    │ 20:55:28  DEBUG     main.py           generate          pmt Processed 1015 input tokens in 1 seconds (1761 tokens per secon…││     },                                                                            │
-    │ 20:55:30  INFO      main.py           generate          gen This looks like a Python file that defines a graph-based system…││     {                                                                             │
-    │ 20:55:30  DEBUG     pie.py            _loop             AssistantMessage(content=[ThinkingContent(thinking='This looks like…││       "role": "user",                                                             │
-    │ 20:55:30  DEBUG     pie.py            on_event          # DEF class symgraph.Edge /private/var/folders/_5/vz_p3mls23l5rtlhj…││       "content": "explain symgraph.py"                                            │
-    │ 20:55:30  INFO      main.py           do_POST           self.path='/v1/chat/completions' { "model": "jj", "max_tokens": 819…││     }                                                                             │
-    │ 20:55:30  DEBUG     main.py           translate         messages=[Message(role='system', content='You are a helpful assista…││   ],                                                                              │
-    │ 20:55:30  INFO      main.py           encode            ckpts=[742] <|im_start|>system # Tools You have access to the follo…││   "stream": true,                                                                 │
-    │ 20:55:30  INFO      main.py           __call__          ckpts=[742] len(prompt)=12781 len(self.hx)=1117 cl=1117             ││   "tools": [                                                                      │
-    │ 20:55:30  DEBUG     main.py           __call__          cont                                                                ││     {                                                                             │
-    │ 20:55:58  DEBUG     main.py           generate          pmt Processed 12781 input tokens in 28 seconds (454 tokens per seco…││       "type": "function",                                                         │
-    │ 20:56:11  INFO      main.py           generate          gen This is a comprehensive Python file that builds a symbolic grap…││       "function": {                                                               │
-    │ 20:56:11  DEBUG     pie.py            _loop             AssistantMessage(content=[ThinkingContent(thinking='This is a compr…││         "name": "Read",                                                           │
-    │ 20:56:25  INFO      pie.py            _repl             Add a method to Graph called clear_edges() that resets edges, _edge…││         "description": "Read a file. Use offset/limit for large files instead of  │
-    │ 20:56:25  INFO      main.py           do_POST           self.path='/v1/chat/completions' { "model": "jj", "max_tokens": 819…││ reading the whole thing.",                                                        │
-    │ 20:56:25  DEBUG     main.py           translate         messages=[Message(role='system', content='You are a helpful assista…││         "parameters": {                                                           │
-    │ 20:56:25  INFO      main.py           encode            ckpts=[742, 13481] <|im_start|>system # Tools You have access to th…││           "type": "object",                                                       │
-    │ 20:56:25  INFO      main.py           __call__          ckpts=[13481, 742] len(prompt)=13515 len(self.hx)=13586 cl=751      ││           "properties": {                                                         │
-    │ 20:56:25  DEBUG     main.py           load              cache/mlxcommunityQwen354BOptiQ4bit_742_3bb19df63c78dde8.safetensor…││             "path": {                                                             │
-    │ 20:56:25  DEBUG     main.py           generate          save_fn 13481                                                       ││               "description": "File path to read (relative to cwd)",               │
-    │ 20:56:56  DEBUG     main.py           generate          pmt Processed 13515 input tokens in 31 seconds (438 tokens per seco…││               "title": "Path",                                                    │
-    │ 20:57:00  INFO      main.py           generate          gen The user wants me to add a `clear_edges()` method to the `Graph…││               "type": "string"                                                    │
-    │ 20:57:00  DEBUG     pie.py            _loop             AssistantMessage(content=[ThinkingContent(thinking='The user wants …││             },                                                                    │
-    │ 20:57:00  DEBUG     pie.py            on_event          edited symgraph.py: replaced 3 line(s) with 10 line(s)              ││             "offset": {                                                           │
-    │ 20:57:00  INFO      main.py           do_POST           self.path='/v1/chat/completions' { "model": "jj", "max_tokens": 819…││               "anyOf": [                                                          │
-    │ 20:57:00  DEBUG     main.py           translate         messages=[Message(role='system', content='You are a helpful assista…││                 {                                                                 │
-    │ 20:57:00  INFO      main.py           encode            ckpts=[742, 13481] <|im_start|>system # Tools You have access to th…││                   "type": "integer"                                               │
-    │ 20:57:00  INFO      main.py           __call__          ckpts=[13481, 742] len(prompt)=13801 len(self.hx)=13768 cl=13768    ││                 },                                                                │
-    │ 20:57:00  DEBUG     main.py           __call__          cont                                                                ││                 {                                                                 │
+    │ TIME      LVL       FILE              FUNC              MESSAGE                                                            …││ time       : 2026-05-09T17:35:17.021887+00:00                                     │
+    │ 17:35:01  DEBUG     main.py           main              args=Namespace(model='mlx-community/Qwen3.5-4B-OptiQ-4bit', leash='…││ level      : DEBUG                                                                │
+    │ 17:35:03  DEBUG     main.py           serve             Server bound to http://127.0.0.1:8000                               ││ logger     : root                                                                 │
+    │ 17:35:03  WARNING   pie.py            __init__          No api-key                                                          ││ file       : tmp/main.py                                                          │
+    │ 17:35:15  DEBUG     pie.py            repl              explain sittree.py                                                  ││ function   : encode                                                               │
+    │ 17:35:15  DEBUG     pie.py            stream            { "model": "jj", "max_tokens": 8192, "messages": [ { "role": "syste…││ line       : 684                                                                  │
+    │ 17:35:15  DEBUG     main.py           do_POST           self.path='/v1/chat/completions' { "model": "jj", "max_tokens": 819…││ id         : f8e15ee6-aaa5-4532-8735-172d6a7b9707                                 │
+    │ 17:35:15  DEBUG     main.py           translate         messages=[Message(role='system', content='Available skills (use Get…││                                                                                   │
+    │ 17:35:15  DEBUG     main.py           encode            ckpts=[1898] <|im_start|>system # Tools You have access to the foll…││ ── message ──                                                                     │
+    │ 17:35:15  DEBUG     main.py           __call__          ckpts=[1898] len(prompt)=1909 len(self.hx)=0 cl=0                   ││ ckpts=[1898]                                                                      │
+    │ 17:35:15  DEBUG     main.py           load              cache/mlxcommunityQwen354BOptiQ4bit_1898_21d53f79d6f145d5.safetenso…││ <|im_start|>system                                                                │
+    │ 17:35:15  DEBUG     main.py           generate          Processed 1909 input tokens in 0 seconds (11222 tokens per second)  ││ # Tools                                                                           │
+    │ 17:35:16  INFO      main.py           generate          The user is asking me to explain a file called "sittree.py". I shou…││                                                                                   │
+    │ 17:35:16  DEBUG     pie.py            _loop             AssistantMessage(content=[ThinkingContent(thinking='The user is ask…││ You have access to the following functions:                                       │
+    │ 17:35:16  INFO      pie.py            _execute_one      # sittree.py (lines 1–1266 of 1266) """ sittree.py — Symbol usage f…││                                                                                   │
+    │ 17:35:16  DEBUG     pie.py            stream            { "model": "jj", "max_tokens": 8192, "messages": [ { "role": "syste…││ <tools>                                                                           │
+    │ 17:35:16  DEBUG     main.py           do_POST           self.path='/v1/chat/completions' { "model": "jj", "max_tokens": 819…││ {"type": "function", "function": {"name": "Read", "description": "Read a file. Us │
+    │ 17:35:16  DEBUG     main.py           translate         messages=[Message(role='system', content='Available skills (use Get…││ e offset/limit for large files instead of reading the whole thing.", "parameters" │
+    │>17:35:17  DEBUG     main.py           encode            ckpts=[1898] <|im_start|>system # Tools You have access to the foll…││ : {"type": "object", "properties": {"path": {"description": "File path to read (r │
+    │ 17:35:17  DEBUG     main.py           __call__          ckpts=[1898] len(prompt)=14602 len(self.hx)=1979 cl=1979            ││ elative to cwd)", "title": "Path", "type": "string"}, "offset": {"anyOf": [{"type │
+    │ 17:35:17  DEBUG     main.py           __call__          cont                                                                ││ ": "integer"}, {"type": "null"}], "default": null, "description": "Start line (1- │
+    │ 17:35:47  DEBUG     main.py           generate          Processed 14602 input tokens in 31 seconds (476 tokens per second)  ││ based)", "title": "Offset"}, "limit": {"anyOf": [{"type": "integer"}, {"type": "n │
+    │ 17:36:02  INFO      main.py           generate          This is a comprehensive file. Let me provide a clear explanation of…││ ull"}], "default": null, "description": "Max lines to read", "title": "Limit"}},  │
+    │ 17:36:02  DEBUG     pie.py            _loop             AssistantMessage(content=[ThinkingContent(thinking='This is a compr…││ "required": ["path"]}}}                                                           │
+    │                                                                                                                             ││ {"type": "function", "function": {"name": "Write", "description": "Create or over │
+    │                                                                                                                             ││ write a file. Prefer 'edit' for small changes to existing files.", "parameters":  │
+    │                                                                                                                             ││ {"type": "object", "properties": {"path": {"description": "File path to create or │
+    │                                                                                                                             ││  overwrite (relative to cwd)", "title": "Path", "type": "string"}, "content": {"d │
+    │                                                                                                                             ││ escription": "Full file content", "title": "Content", "type": "string"}}, "requir │
+    │                                                                                                                             ││ ed": ["path", "content"]}}}                                                       │
+    │                                                                                                                             ││ {"type": "function", "function": {"name": "Edit", "description": "Replace an exac │
+    │                                                                                                                             ││ t unique string in a file. Read the file first if unsure of exact text.", "parame │
+    │                                                                                                                             ││ ters": {"type": "object", "properties": {"path": {"description": "File path to ed │
+    │                                                                                                                             ││ it (relative to cwd)", "title": "Path", "type": "string"}, "old_text": {"descript │
+    │                                                                                                                             ││ ion": "Exact text to replace (must appear exactly once)", "title": "Old Text", "t │
+    │                                                                                                                             ││ ype": "string"}, "new_text": {"description": "Replacement text", "title": "New Te │
+    │                                                                                                                             ││ xt", "type": "string"}}, "required": ["path", "old_text", "new_text"]}}}          │
+    │                                                                                                                             ││ {"type": "function", "function": {"name": "Bash", "description": "Run a shell com │
+    │                                                                                                                             ││ mand, get stdout+stderr. Prefer read/grep/find/ls for file exploration.", "parame │
+    │                                                                                                                             ││ ters": {"type": "object", "properties": {"command": {"description": "Shell comman │
+    │                                                                                                                             ││ d to execute", "title": "Command", "type": "string"}, "timeout": {"default": 120, │
+    │                                                                                                                             ││  "description": "Timeout in seconds", "title": "Timeout", "type": "integer"}}, "r │
+    │                                                                                                                             ││ equired": ["command"]}}}                                                          │
+    │                                                                                                                             ││ {"type": "function", "function": {"name": "Grep", "description": "Search files fo │
+    │                                                                                                                             ││ r a pattern. Respects .gitignore.", "parameters": {"type": "object", "properties" │
     └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────────────────┘
-     All  bdedc2c5-0  8j7j3o1e-6
-      log.json  │  3/58 (of 172)  filter: lvl:10;file:main,pie  │  ↑/k ↓/j · PgUp/PgDn · g/G · n/N · * highlight · o open · ; filter · h/l tabs · q quit
+     All  cef534bf-5  50e0af6d-1  b578ec4d-f  f8e15ee6-a  d25f55fd-2  9a03247f-e  5160a1d3-1
+      log.json  │  18/23 (of 592)  filter: lvl:10;file:main,pie  │  ↑/k ↓/j · PgUp/PgDn · g/G · n/N · * highlight · o open · ; filter · h/l tabs · v mark · q quit
+
+
+    ┌─ logs ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐┌─ detail ──────────────────────────────────────────────────────────────────────────┐
+    │ TIME      LVL       FILE              FUNC              MESSAGE                                                            …││ time       : 2026-05-09T17:51:22.117961+00:00                                     │
+    │ 17:50:55  DEBUG     main.py           main              args=Namespace(model='mlx-community/Qwen3.5-4B-OptiQ-4bit', leash='…││ level      : DEBUG                                                                │
+    │ 17:50:57  DEBUG     main.py           serve             Server bound to http://127.0.0.1:8000                               ││ logger     : root                                                                 │
+    │ 17:50:57  WARNING   pie.py            __init__          No api-key                                                          ││ file       : tmp/main.py                                                          │
+    │ 17:51:13  DEBUG     pie.py            repl              explain sittree.py                                                  ││ function   : encode                                                               │
+    │ 17:51:13  DEBUG     pie.py            stream            { "model": "jj", "max_tokens": 8192, "messages": [ { "role": "syste…││ line       : 684                                                                  │
+    │ 17:51:13  DEBUG     main.py           do_POST           self.path='/v1/chat/completions' { "model": "jj", "max_tokens": 819…││ id         : 5160a1d3-1552-40a7-a82e-ebaf3d0995f8                                 │
+    │ 17:51:13  DEBUG     main.py           translate         messages=[Message(role='system', content='Available skills (use Get…││                                                                                   │
+    │ 17:51:13  DEBUG     main.py           encode            ckpts=[698] <|im_start|>system # Tools You have access to the follo…││ ── message ──                                                                     │
+    │ 17:51:13  DEBUG     main.py           __call__          ckpts=[698] len(prompt)=709 len(self.hx)=0 cl=0                     ││ ckpts=[698]                                                                       │
+    │ 17:51:13  DEBUG     main.py           __call__          anew                                                                ││ <|im_start|>system                                                                │
+    │ 17:51:13  DEBUG     main.py           generate          save_fn 698                                                         ││ # Tools                                                                           │
+    │ 17:51:15  DEBUG     main.py           save              cache/mlxcommunityQwen354BOptiQ4bit_698_6f0ceeb516faea93.safetensor…││                                                                                   │
+    │ 17:51:15  DEBUG     main.py           generate          Processed 709 input tokens in 2 seconds (394 tokens per second)     ││ You have access to the following functions:                                       │
+    │ 17:51:16  INFO      main.py           generate          The user is asking me to explain a file called "sittree.py". I shou…││                                                                                   │
+    │ 17:51:16  DEBUG     pie.py            _loop             AssistantMessage(content=[ThinkingContent(thinking='The user is ask…││ <tools>                                                                           │
+    │ 17:51:16  INFO      pie.py            _execute_one       /private/var/folders/_5/vz_p3mls23l5rtlhj3nzvwjw0000gn/T/tmp8sx8z7…││ {"type": "function", "function": {"name": "ReadTree", "description": "Inspect sou │
+    │ 17:51:16  DEBUG     pie.py            stream            { "model": "jj", "max_tokens": 8192, "messages": [ { "role": "syste…││ rce code using tree-sitter. Works for any supported language (Python, JS/TS, Go,  │
+    │ 17:51:16  DEBUG     main.py           do_POST           self.path='/v1/chat/completions' { "model": "jj", "max_tokens": 819…││ Rust, Java, C/C++, Ruby, and more). Two modes:\n  OUTLINE (no symbols): returns t │
+    │ 17:51:16  DEBUG     main.py           translate         messages=[Message(role='system', content='Available skills (use Get…││ he symbol tree of a file or directory — class/function/method/var names with line │
+    │ 17:51:16  DEBUG     main.py           encode            ckpts=[698] <|im_start|>system # Tools You have access to the follo…││  ranges. Use this first to orient yourself before reading or editing code.\n  SYM │
+    │ 17:51:16  DEBUG     main.py           __call__          ckpts=[698] len(prompt)=2211 len(self.hx)=792 cl=792                ││ BOL LOOKUP (symbols=[...]): returns the full source body of every definition of t │
+    │ 17:51:16  DEBUG     main.py           __call__          cont                                                                ││ hose names, plus every call/assignment site with context. Output is paste-safe fo │
+    │ 17:51:19  DEBUG     main.py           generate          Processed 2211 input tokens in 3 seconds (660 tokens per second)    ││ r use as old_str in an Edit call. Accepts dotted names like 'ClassName.method' to │
+    │ 17:51:22  INFO      main.py           generate          This is a Python file that appears to be a tool for inspecting sour…││  narrow results.", "parameters": {"type": "object", "properties": {"path": {"desc │
+    │ 17:51:22  DEBUG     pie.py            _loop             AssistantMessage(content=[ThinkingContent(thinking='This is a Pytho…││ ription": "File or directory to inspect (relative to cwd)", "title": "Path", "typ │
+    │ 17:51:22  INFO      pie.py            _execute_one      # DEF outline_path /private/var/folders/_5/vz_p3mls23l5rtlhj3nzvwjw…││ e": "string"}, "symbols": {"description": "Symbol names to look up, e.g. [\"MyCla │
+    │ 17:51:22  DEBUG     pie.py            stream            { "model": "jj", "max_tokens": 8192, "messages": [ { "role": "syste…││ ss\", \"my_fn\", \"ClassName.method\"]. Omit (or pass []) for outline mode. Dotte │
+    │ 17:51:22  DEBUG     main.py           do_POST           self.path='/v1/chat/completions' { "model": "jj", "max_tokens": 819…││ d names are accepted — the last component is matched and results are labelled wit │
+    │ 17:51:22  DEBUG     main.py           translate         messages=[Message(role='system', content='Available skills (use Get…││ h the full qualified name.", "items": {"type": "string"}, "title": "Symbols", "ty │
+    │>17:51:22  DEBUG     main.py           encode            ckpts=[698] <|im_start|>system # Tools You have access to the follo…││ pe": "array"}, "depth": {"default": 1, "description": "Outline mode: nesting dept │
+    │ 17:51:22  DEBUG     main.py           __call__          ckpts=[698] len(prompt)=6534 len(self.hx)=2354 cl=2354              ││ h (1=top-level only, 2=classes+methods).", "title": "Depth", "type": "integer"},  │
+    │ 17:51:22  DEBUG     main.py           __call__          cont                                                                ││ "kinds": {"description": "Filter symbol-lookup results by kind. Valid values: def │
+    │ 17:51:32  DEBUG     main.py           generate          Processed 6534 input tokens in 10 seconds (660 tokens per second)   ││ inition, assignment, call, import, reference. Default: definition + assignment +  │
+    │ 17:51:43  INFO      main.py           generate          Now I have a good understanding of the sittree.py file. Let me prov…││ call + import (no bare references).", "items": {"type": "string"}, "title": "Kind │
+    │ 17:51:43  DEBUG     pie.py            _loop             AssistantMessage(content=[ThinkingContent(thinking='Now I have a go…││ s", "type": "array"}, "lang": {"anyOf": [{"type": "string"}, {"type": "null"}], " │
+    │                                                                                                                             ││ default": null, "description": "Override language detection, e.g. 'py', 'ts', 'go │
+    │                                                                                                                             ││ '.", "title": "Lang"}}, "required": ["path"]}}}                                   │
+    │                                                                                                                             ││ </tools>                                                                          │
+    │                                                                                                                             ││                                                                                   │
+    │                                                                                                                             ││ If you choose to call a function ONLY reply in the following format with NO suffi │
+    │                                                                                                                             ││ x:                                                                                │
+    │                                                                                                                             ││                                                                                   │
+    │                                                                                                                             ││ <tool_call>                                                                       │
+    │                                                                                                                             ││ <function=example_function_name>                                                  │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────────────────┘
+     All  cef534bf-5  50e0af6d-1  b578ec4d-f  f8e15ee6-a  d25f55fd-2  9a03247f-e  5160a1d3-1
+      log.json  │  30/35 (of 592)  filter: lvl:10;file:main,pie  │  ↑/k ↓/j · PgUp/PgDn · g/G · n/N · * highlight · o open · ; filter · h/l tabs · v mark · q quit
+
+~/tmp[1 jobs]> cat prompt test | me -a deepseek
+
+    Yes, it did — and by a **substantial margin**. Here’s the comparison from the logs you provided:
+
+    |                      | `Read` session (full file) | `ReadTree` session (outline + symbols) |
+    |----------------------|----------------------------|----------------------------------------|
+    | Tool calls           | 1 (Read whole file)        | 3 (outline, depth 2, symbol bodies)    |
+    | Token count up to<br>final assistant response | **14,602** tokens | **7,827** tokens |
+    | **Savings**          | —                    | **6,775 tokens fewer (≈46% reduction)** |
+
+    (That token count comes from the `---14602` and `---7827` markers at the end of the two conversation excerpts; both are measured at the same point — after the tool responses and assistant `think`, just before the final explanations are written.)
+
+    ## What made the difference
+
+    - **`Read`** dumped the entire 1,266‑line file into the context (≈35 KB of text, including all comments, blank lines, and internal helper logic).
+    - **`ReadTree`** only supplied:
+      1. A one‑line‑per‑symbol outline (≈70 lines).
+      2. The full source for *only* the 5 requested symbols (`Capability`, `outline_path`, `SymbolFinder`, `search_symbols`, `print_outline`, `main`) plus their call sites — a fraction of the file.
+
+    Everything the agent actually needed for a high‑level explanation was in that reduced set, so the rest of the file was just noise.
+
+    ## But was it “as good”?
+
+    As we covered earlier, the `ReadTree`‑based explanation was slightly less detailed — it missed some configuration flags, language lists, and advanced features that only appeared in the comments and constants of the full file. But for **understanding the tool’s structure and main capabilities**, it was perfectly sufficient. So you saved nearly half the context window while still getting a perfectly usable answer.
+
+    **Bottom line:** `ReadTree` is a sharp tool for context efficiency — it can slash input size dramatically for tasks like code explanation, and the smaller context window often allows the model to think faster and more focused.
+
+~/tmp[1 jobs]> hx --capture
+
 </pre></details><br>

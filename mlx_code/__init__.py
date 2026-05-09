@@ -1,4 +1,4 @@
-from .main import make_handler, generate
-from .pie import run_repl
+from .main import serve, run
+from .pie import harness
 
-__all__ = ["make_handler", "run_repl"]
+__all__ = ["serve", "run", "harness"]

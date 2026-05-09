@@ -363,7 +363,9 @@ def _related_key(entry: dict):
 
 def render_list(win, entries: list[dict], cursor: int, scroll: int,
                 col_widths: dict, highlight_on: bool = False,
-                related_keys: list | None = None):
+                related_keys: list | None = None,
+                marked_indices: set = None,
+                entry_to_master_index: dict = None):
     win.erase()
     draw_border_box(win, "logs")
     h, w = win.getmaxyx()
@@ -402,6 +404,17 @@ def render_list(win, entries: list[dict], cursor: int, scroll: int,
         color  = LEVEL_COLORS.get(level, 7)
         ts     = short_ts(entry.get("timestamp", ""))
         f_name = short_file(entry.get("file", ""))
+
+        # Draw marker (green '>') at column 1 if marked
+        if marked_indices is not None and entry_to_master_index is not None:
+            master_idx = entry_to_master_index.get(id(entry), -1)
+            is_marked = master_idx in marked_indices
+            marker = '>' if is_marked else ' '
+            try:
+                win.addch(row, 1, marker, curses.color_pair(2) | curses.A_BOLD)
+            except curses.error:
+                pass
+
         fn     = entry.get("function", "")
         msg    = entry.get("message", "").replace("\n", " ")
         lsg    = re.sub(r'\s{2,}', ' ', msg)
@@ -453,7 +466,7 @@ def render_status(stdscr, cursor: int, total: int, all_total: int,
 
     status = (
         f"  {log_file}  │  {count_str}{filter_indicator}  │  "
-        "↑/k ↓/j · PgUp/PgDn · g/G · n/N · * highlight · o open · ; filter · h/l tabs · q quit  "
+        "↑/k ↓/j · PgUp/PgDn · g/G · n/N · * highlight · o open · ; filter · h/l tabs · v mark · q quit  "
     )
     try:
         stdscr.addstr(h - 1, 0, truncate(status, w - 1),
@@ -547,6 +560,9 @@ def tui(stdscr, entries, log_file, initial_filter="", initial_visible=None):
     cursor = 0
     scroll = 0
     highlight_on = False
+    # Marking state: store indices in all_entries
+    entry_to_master_index = {id(e): idx for idx, e in enumerate(all_entries)}
+    marked_indices = set()
 
     stdscr.clear()
     stdscr.noutrefresh()
@@ -569,9 +585,11 @@ def tui(stdscr, entries, log_file, initial_filter="", initial_visible=None):
     h, w = stdscr.getmaxyx()
     list_win, detail_win, list_w, detail_w, pane_h, col_widths = _make_windows(h, w)
 
-    tabs:         list[tuple[str, list[dict]]] = build_tabs(visible_entries)
-    tab_index:    int  = 0
-    per_tab_cursor: dict[int, tuple[int, int]] = {}   
+    tabs: list[tuple[str, list[dict]]] = build_tabs(visible_entries)
+    tab_index: int = len(tabs) - 1 if tabs else 0   # start on rightmost tab
+    per_tab_cursor: dict[int, tuple[int, int]] = {}
+    for i in range(len(tabs)):
+        per_tab_cursor[i] = (0, 0)
 
     def current_tab_entries() -> list[dict]:
         return tabs[tab_index][1] if tabs else []
@@ -586,7 +604,7 @@ def tui(stdscr, entries, log_file, initial_filter="", initial_visible=None):
         nonlocal tabs, tab_index, cursor, scroll
         per_tab_cursor.clear()
         tabs = build_tabs(visible_entries)
-        tab_index = 0
+        tab_index = len(tabs) - 1 if tabs else 0
         cursor = 0
         scroll = 0
 
@@ -615,7 +633,8 @@ def tui(stdscr, entries, log_file, initial_filter="", initial_visible=None):
         current_key = related_keys[cursor] if tab_entries else None
 
         render_list(list_win, tab_entries, cursor, scroll, col_widths,
-                    highlight_on, related_keys)
+                    highlight_on, related_keys,
+                    marked_indices, entry_to_master_index)
         render_detail(detail_win, current)
         render_tab_bar(stdscr, tabs, tab_index)
         render_status(stdscr, cursor, len(tab_entries),
@@ -651,14 +670,31 @@ def tui(stdscr, entries, log_file, initial_filter="", initial_visible=None):
                 if related_keys[i] == current_key:
                     cursor = i
                     break
-        elif key in (ord("h"), curses.KEY_LEFT) and tab_index > 0:
+        elif key in (ord("h"), curses.KEY_LEFT):
+            if tab_index > 0:
+                switch_tab(tab_index - 1)
+            else:
+                switch_tab(len(tabs) - 1)          # wrap to last tab
             related_keys = [_related_key(e) for e in current_tab_entries()]
-            switch_tab(tab_index - 1)
+        elif key in (ord("l"), curses.KEY_RIGHT):
+            if tab_index < len(tabs) - 1:
+                switch_tab(tab_index + 1)
+            else:
+                switch_tab(0)                      # wrap to first tab
             related_keys = [_related_key(e) for e in current_tab_entries()]
-        elif key in (ord("l"), curses.KEY_RIGHT) and tab_index < len(tabs) - 1:
-            related_keys = [_related_key(e) for e in current_tab_entries()]
-            switch_tab(tab_index + 1)
-            related_keys = [_related_key(e) for e in current_tab_entries()]
+        elif key == ord('v') and tab_entries:
+            current_entry = tab_entries[cursor]
+            master_idx = entry_to_master_index.get(id(current_entry), -1)
+            if master_idx != -1:
+                if master_idx in marked_indices:
+                    marked_indices.remove(master_idx)
+                else:
+                    marked_indices.add(master_idx)
+                # Refresh list to update marker
+                render_list(list_win, tab_entries, cursor, scroll, col_widths,
+                            highlight_on, related_keys,
+                            marked_indices, entry_to_master_index)
+                list_win.noutrefresh()
         elif key in (curses.KEY_UP, ord("k")):
             cursor = max(0, cursor - 1)
         elif key in (curses.KEY_DOWN, ord("j")):
@@ -675,6 +711,8 @@ def tui(stdscr, entries, log_file, initial_filter="", initial_visible=None):
             h, w = stdscr.getmaxyx()
             list_win, detail_win, list_w, detail_w, pane_h, col_widths = _make_windows(h, w)
             stdscr.clearok(True)
+
+    return sorted(marked_indices)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -694,6 +732,13 @@ def main():
         help="Initial filter string (same syntax as in UI)"
     )
 
+    parser.add_argument(
+        "-o", "--out",
+        dest="out",
+        metavar="FILE",
+        help="Write marked entries to FILE (JSON lines format) instead of stdout"
+    )
+
     args = parser.parse_args()
 
     log_path = args.logfile
@@ -711,7 +756,16 @@ def main():
 
     initial_entries = apply_filter(logs, cli_filter) if cli_filter else logs
 
-    curses.wrapper(tui, logs, log_path, cli_filter, initial_entries)
+    marked = curses.wrapper(tui, logs, log_path, cli_filter, initial_entries)
+    if not marked:
+        return
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as f:
+            for idx in sorted(marked):
+                f.write(json.dumps(logs[idx]) + "\n")
+    else:
+        for idx in sorted(marked):
+            print(json.dumps(logs[idx]))
 
 if __name__ == "__main__":
     main()

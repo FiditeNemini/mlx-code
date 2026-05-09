@@ -1,14 +1,12 @@
 # Copyright 2026 J Joe
 
 # {{{utl
-import json, uuid
+import json
+import uuid
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
-
 import random
 import tempfile
 import argparse
-import json
 import logging
 import os
 import re
@@ -16,8 +14,6 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
-from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer, HTTPServer
 from pathlib import Path
 import mlx.core as mx
@@ -37,7 +33,6 @@ from typing import (
     Union,
 )
 
-import json
 from datetime import datetime, timezone
 
 _LOG_RECORD_BUILTIN_KEYS = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__)
@@ -279,7 +274,7 @@ def parse_gemini(body: dict) -> tuple[list[Tool], list[Message]]:
             if "text" in part:
                 text_parts.append(part["text"])
             if "thought" in part:
-                thinking_parts.append(part.get("thinking") or part.get("text", ""))
+                thinking_parts.append(part.get("thinking") or part.get("thought"))
             if "functionCall" in part:
                 fc = part["functionCall"]
                 tool_calls.append(ToolCall(
@@ -329,7 +324,6 @@ def parse_default(body: dict) -> tuple[list[Tool], list[Message]]:
     ]
 
     def _extract_parts(content) -> tuple[str, str]:
-        """Returns (text, thinking). Handles str, flat block lists."""
         if isinstance(content, str):
             return content, ""
         text_parts, thinking_parts = [], []
@@ -490,7 +484,7 @@ PARSERS: dict[str, Any] = {
     "codex": parse_codex,
     "claude": parse_claude,
     "gemini": parse_gemini,
-    "default": parse_default,
+    "pie": parse_default,
 }
 
 def render_default(tools: list[Tool], messages: list[Message]) -> dict:
@@ -641,7 +635,7 @@ def render_gemini(tools: list[Tool], messages: list[Message]) -> dict:
 RENDERERS: dict[str, Any] = {
     "claude": render_claude,
     "gemini": render_gemini,
-    "default": render_default,
+    "pie": render_default,
 }
 
 def translate(
@@ -670,7 +664,7 @@ def translate(
     return RENDERERS[dst](tools, messages)
 
 def encode(body, api, tokenizer, system_override, tool_names, skips, strict=False):
-    body = translate(body, api, "default", system_override=system_override, tool_names=tool_names, skips=skips, strict=strict)
+    body = translate(body, api, "pie", system_override=system_override, tool_names=tool_names, skips=skips, strict=strict)
     tools = body.pop("tools", None)
     msgs = body.pop('messages', None)
     if not msgs or not msgs[-1].get('content', '').strip():
@@ -685,7 +679,7 @@ def encode(body, api, tokenizer, system_override, tool_names, skips, strict=Fals
         prfx_s = apply_chat_template(p_msgs)
         prfx = tokenizer.encode(prfx_s, add_special_tokens=add_special_tokens)
         ckpts.append(get_common_len(full, prfx))
-    logger.info(f'{ckpts=}\n'+'\n'.join([f"{tokenizer.decode(full[i:j])}\n---{j}" for i, j in zip([0]+sorted(ckpts), sorted(ckpts)+[len(full)])]))
+    logger.debug(f'{ckpts=}\n'+'\n'.join([f"{tokenizer.decode(full[i:j])}\n---{j}" for i, j in zip([0]+sorted(ckpts), sorted(ckpts)+[len(full)])]))
     return full, sorted(ckpts, reverse=True)
 # }}}enc
 # {{{gen
@@ -720,7 +714,7 @@ class PromptCache:
 
     def __call__(self, prompt, ckpts):
         cl = get_common_len(self.hx, prompt)
-        logger.info(f'{ckpts=} {len(prompt)=} {len(self.hx)=} {cl=}')
+        logger.debug(f'{ckpts=} {len(prompt)=} {len(self.hx)=} {cl=}')
         if self.cache is not None:
             if len(self.hx)==cl:
                 logger.debug('cont')
@@ -789,12 +783,12 @@ def generate(model, tokenizer, prompt, ckpts, pc, max_tokens=256, **kwargs):
         seg = detokenizer.last_segment
         if len(gens) == 1:
             tic_inp = time.perf_counter()
-            logger.debug(f'pmt\nProcessed {len(prompt)} input tokens in {tic_inp-tic_non:.0f} seconds ({len(prompt)/(tic_inp-tic_non):.0f} tokens per second)')
+            logger.debug(f'Processed {len(prompt)} input tokens in {tic_inp-tic_non:.0f} seconds ({len(prompt)/(tic_inp-tic_non):.0f} tokens per second)')
         if seg:
             yield seg
     pc.hx = prompt + gens
     tic_out = time.perf_counter()
-    logger.info(f'gen\n{tokenizer.decode(gens)}\nGenerated {len(gens)} new tokens in {tic_out-tic_inp:.0f} seconds ({len(gens)/(tic_out-tic_inp):.0f} tokens per second)')
+    logger.info(f'{tokenizer.decode(gens)}\n\n---\nGenerated {len(gens)} new tokens in {tic_out-tic_inp:.0f} seconds ({len(gens)/(tic_out-tic_inp):.0f} tokens per second)')
     detokenizer.finalize()
     if seg := detokenizer.last_segment:
         yield seg
@@ -1339,7 +1333,7 @@ def stream_sse(format_type, seg_gen, msg_id, in_tokens, think_tags=None):
         "claude": ClaudeAdapter,
         "codex": CodexAdapter,
         "gemini": GeminiAdapter,
-        "default": DefaultAdapter,
+        "pie": DefaultAdapter,
     }
 
     adapter = adapters.get(format_type, CodexAdapter)(msg_id, in_tokens)
@@ -1376,7 +1370,7 @@ def stream_sse(format_type, seg_gen, msg_id, in_tokens, think_tags=None):
         yield adapter.end(False)
 # }}}dec
 # {{{ser
-def make_handler(model_name, api, cache_dir, system, names, skips, parse_think=True):
+def make_handler(model_name, cache_dir, system, names, skips, parse_think=True):
     model, tokenizer = mlx_lm.load(model_name)
     pc = PromptCache(model, model_name=model_name, cache_dir=cache_dir)
     if not isinstance(tokenizer, mlx_lm.tokenizer_utils.TokenizerWrapper):
@@ -1413,6 +1407,7 @@ def make_handler(model_name, api, cache_dir, system, names, skips, parse_think=T
                     self.send_json(200, {"input_tokens": 0})
                     return
                 if path.startswith("/v1beta/models/"):
+                    api = "gemini"
                     if not ("alt=sse" in self.path or "streamGenerateContent" in path):
                         n = int(self.headers.get("Content-Length", 0))
                         _ = self.rfile.read(n)
@@ -1426,9 +1421,15 @@ def make_handler(model_name, api, cache_dir, system, names, skips, parse_think=T
                         self.end_headers()
                         self.wfile.write(dummy)
                         return
+                elif path.startswith("/v1/messages"):
+                    api = "claude"
+                elif path.startswith("/v1/responses"):
+                    api = "codex"
+                else:
+                    api = "pie"
                 n = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(n))
-                logger.info(f'{self.path=}\n{json.dumps(body, indent=2)}')
+                logger.debug(f'{self.path=}\n{json.dumps(body, indent=2)}')
                 abort_ev.set()
                 with gen_lock:
                     abort_ev.clear()
@@ -1450,65 +1451,77 @@ def make_handler(model_name, api, cache_dir, system, names, skips, parse_think=T
                 raise
     return Handler
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-m", "--model", default="mlx-community/Qwen3.5-4B-OptiQ-4bit")
-    parser.add_argument("-a", "--api", type=str, default="default")
-    parser.add_argument("-H", "--harness", default=None)
-    parser.add_argument("-s", "--system", type=str, default='You are a helpful assistant')
-    # parser.add_argument("--tools", nargs="+", default=['Bash', 'run_shell_command', 'exec_command'])
-    parser.add_argument("--tools", nargs="+", default=None, help="Allow all tools if None (default None)")
-    parser.add_argument("--cache", type=str, default='cache')
-    parser.add_argument("--work", default=os.getcwd())
-    parser.add_argument("--nocc", action="store_true", help="Disable Claude Code subprocess and run server only")
-    parser.add_argument("--port", type=int, default=None, help="8000 if None (default None)")
-    parser.add_argument("--skips", nargs="+", default=[
-        r'(?m)^\[SUGGESTION MODE[\s\S]*',
-        r'(?m)^<system-reminder>[\s\S]*?^</system-reminder>\s*',
-    ])
-    parser.add_argument("--host", default="127.0.0.1")
-    args, harness_args = parser.parse_known_args()
-    logger.info(f'{args=} {harness_args=}')
-    api = args.harness if args.harness else args.api
-    port = args.port if args.port is not None else 8000
-    server = None
-    while server is None:
+
+
+def serve(
+    host: str,
+    port: int,
+    model: str,
+    cache: str,
+    system: str | None,
+    tools: list[str],
+    skips: list[str],
+    *,
+    fixed_port: bool = False,
+) -> tuple[HTTPServer, str]:
+    handler = make_handler(model, cache, system, tools, skips)
+    while True:
         try:
-            server = HTTPServer(
-                (args.host, port),
-                make_handler(args.model, api, args.cache, args.system, args.tools, args.skips),
-            )
+            server = HTTPServer((host, port), handler)
+            url = f"http://{host}:{port}"
+            logger.debug(f'Server bound to {url}')
+            return server, url
         except OSError as e:
-            if e.errno == 48 or e.errno == 98: 
-                if args.port is not None:
+            if e.errno in (48, 98):  
+                if fixed_port:
                     logger.error(f"Port {port} is already in use.")
                     sys.exit(1)
                 port += 1
             else:
-                raise e
-    url = f"http://{args.host}:{port}"
-    if args.nocc:
-        print(url)
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            print("\nShutting down server...")
-            server.server_close()
-    else:
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        env = os.environ.copy()
+                raise
 
-        with tempfile.TemporaryDirectory() as _home:
-            home = Path(_home)
-            env["HOME"] = str(home)
-            env["SHELL"] = "/bin/bash"
-            env["GOOGLE_GEMINI_BASE_URL"]=url
-            env["GEMINI_API_KEY"]="mc"
 
+def mirror_workspace(src: str, dst: str) -> None:
+    for root, dirs, files in os.walk(src):
+        rel = os.path.relpath(root, src)
+        os.makedirs(os.path.join(dst, rel), exist_ok=True)
+        for f in files:
+            os.link(os.path.join(root, f), os.path.join(dst, rel, f))
+
+
+def run(
+    leash: str,
+    url: str,
+    work: str,
+    model: str,
+    system: str | None,
+    tools: list[str],
+    skill: str | None,
+    leash_args: list[str],
+) -> None:
+    env = os.environ.copy()
+
+    with tempfile.TemporaryDirectory() as _home:
+        home = Path(_home)
+        env["HOME"] = str(home)
+        env["SHELL"] = "/bin/bash"
+
+        workspace = home / "workspace"
+        mirror_workspace(work, str(workspace))
+
+        if leash == "pie":
+            from .pie import harness  # .
+            harness(base_url=url, api=leash, cwd=str(workspace), env=env,
+                system=system, tools=tools, sdir=skill)
+
+        else:
+            env["GOOGLE_GEMINI_BASE_URL"] = url
+            env["GEMINI_API_KEY"] = "mc"
             env.pop("OPENAI_API_KEY", None)
-            codex_dir = home/".codex"
+
+            codex_dir = home / ".codex"
             codex_dir.mkdir(parents=True, exist_ok=True)
-            config_path = (codex_dir/"config.toml").write_text(f"""
+            (codex_dir / "config.toml").write_text(f"""
 [model_providers.local]
 name = "openai"
 base_url = "{url}/v1"
@@ -1521,22 +1534,63 @@ model = "gpt-5.4-mini"
 
             env["ANTHROPIC_BASE_URL"] = url
             env["ANTHROPIC_AUTH_TOKEN"] = "mc"
-            env["ANTHROPIC_MODEL"] = args.model
-            def mirror_workspace(src: str, dst: str):
-                for root, dirs, files in os.walk(src):
-                    rel = os.path.relpath(root, src)
-                    os.makedirs(os.path.join(dst, rel), exist_ok=True)
-                    for f in files:
-                        os.link(os.path.join(root, f), os.path.join(dst, rel, f))
-            workspace = home/"workspace"
-            mirror_workspace(args.work, workspace)
-            if args.harness is None:
-                from .pie import run_repl #.
-                run_repl(base_url=url, provider=api, cwd=str(workspace), env=env)
-            else:
-                if args.harness == "codex":
-                    harness_args += ['--profile', 'local']
-                sys.exit(subprocess.run([args.harness] + harness_args, env=env, cwd=workspace).returncode)
+            env["ANTHROPIC_MODEL"] = model
+
+            if leash == "codex":
+                leash_args = leash_args + ['--profile', 'local']
+
+            sys.exit(subprocess.run([leash] + leash_args, env=env, cwd=workspace).returncode)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-m", "--model", default="mlx-community/Qwen3.5-4B-OptiQ-4bit")
+    parser.add_argument("-l", "--leash", choices=["claude", "codex", "gemini", "pie", "none"], default="pie", help="Harness (if none run server only)")
+    parser.add_argument("--skill", default=None, help="Directory to scan for skills")
+    parser.add_argument("--tools", nargs="+", default=None, help="Allow all tools if None (default None)")
+    parser.add_argument("--system", type=str, default=None, help="System prompt override")
+    parser.add_argument("--cache", type=str, default='cache')
+    parser.add_argument("--work", default=os.getcwd())
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=None, help="8000 if None (default None)")
+    parser.add_argument("--skips", nargs="+", default=[
+        r'(?m)^\[SUGGESTION MODE[\s\S]*',
+        r'(?m)^<system-reminder>[\s\S]*?^</system-reminder>\s*',
+    ])
+    args, leash_args = parser.parse_known_args()
+    logger.debug(f'{args=} {leash_args=}')
+
+    system = None if args.leash in ('none', 'pie') else args.system
+
+    server, url = serve(
+        host=args.host,
+        port=args.port if args.port is not None else 8000,
+        model=args.model,
+        cache=args.cache,
+        system=system,
+        tools=args.tools,
+        skips=args.skips,
+        fixed_port=args.port is not None,
+    )
+
+    if args.leash == "none":
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nShutting down server...")
+            server.server_close()
+    else:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        run(
+            leash=args.leash,
+            url=url,
+            work=args.work,
+            model=args.model,
+            system=system,
+            tools=args.tools,
+            skill=args.skill,
+            leash_args=leash_args,
+        )
 
 if __name__ == "__main__":
     main()

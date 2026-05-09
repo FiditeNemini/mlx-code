@@ -13,7 +13,6 @@ import os
 import pathlib
 import re
 import subprocess
-import sys
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -202,35 +201,16 @@ class ClaudeChat:
         temperature: float | None = None,
         reasoning: Literal["off", "minimal", "low", "medium", "high", "xhigh"] = "off",
         tool_choice: Any = None,
-        mock: list[AssistantMessage] | None = None,
     ) -> None:
         self.model = "claude-haiku-4-5" if model is None else model
-        self.api_key = os.environ.get("ANTHROPIC_API_KEY", "jj") if api_key is None else api_key
-        self.base_url = "https://api.anthropic.com/v1" if base_url is None else base_url.rstrip("/")
+        self.api_key = os.environ.get("ANTHROPIC_API_KEY") if api_key is None else api_key
+        if not self.api_key:
+            logger.warning('No api-key')
+        self.base_url = "https://api.anthropic.com" if base_url is None else base_url.rstrip("/")
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.reasoning = reasoning
         self.tool_choice = tool_choice
-        self._mock: deque[AssistantMessage] = deque(mock) if mock else deque()
-
-    def _emit_mock(self, response: AssistantMessage) -> EventStream:
-        es = EventStream()
-
-        async def _run() -> None:
-            es.push(Event("start", {"partial": response}))
-            for block in response.content:
-                if isinstance(block, TextContent):
-                    es.push(Event("text_delta", {"delta": block.text, "partial": response}))
-                elif isinstance(block, ThinkingContent):
-                    es.push(Event("thinking_delta", {"delta": block.thinking, "partial": response}))
-                elif isinstance(block, ToolCall):
-                    es.push(Event("toolcall_end", {"tool_call": block, "partial": response}))
-            es.push(Event("done", {"reason": response.stop_reason, "message": response}))
-            es.finish(response)
-
-        task = asyncio.create_task(_run())
-        es._attach(task)
-        return es
 
     def _fmt_content(
         self,
@@ -296,9 +276,6 @@ class ClaudeChat:
         system: str,
         tools: list[Tool],
     ) -> EventStream:
-        if self._mock:
-            return self._emit_mock(self._mock.popleft())
-
         es = EventStream()
 
         payload: dict[str, Any] = {
@@ -332,11 +309,13 @@ class ClaudeChat:
             "content-type":      "application/json",
         }
 
+        logger.debug(json.dumps(payload, indent=2))
+
         async def _run() -> None:
             msg = AssistantMessage()
             try:
                 async with httpx.AsyncClient(timeout=120.0) as client:
-                    async with client.stream("POST", f"{self.base_url}/messages", json=payload, headers=headers) as resp:
+                    async with client.stream("POST", f"{self.base_url}/v1/messages", json=payload, headers=headers) as resp:
                         if resp.status_code >= 400:
                             body = await resp.aread()
                             raise RuntimeError(f"HTTP {resp.status_code}: {body.decode()}")
@@ -461,34 +440,15 @@ class DefaultChat:
         max_tokens: int = 8_192,
         temperature: float | None = None,
         tool_choice: Any = None,
-        mock: list[AssistantMessage] | None = None,
     ) -> None:
         self.model = "jj" if model is None else model
-        self.api_key = os.environ.get('DEEPSEEK_API_KEY', "jj") if api_key is None else api_key
-        self.base_url = "http://127.0.0.1:8000" if base_url is None else f'{base_url.rstrip("/")}/v1/chat/completions'
+        if api_key is None:
+            logger.warning('No api-key')
+        self.api_key = "jj" if api_key is None else api_key
+        self.base_url = "http://127.0.0.1:8000" if base_url is None else base_url.rstrip("/")
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.tool_choice = tool_choice
-        self._mock: deque[AssistantMessage] = deque(mock) if mock else deque()
-
-    def _emit_mock(self, response: AssistantMessage) -> EventStream:
-        es = EventStream()
-
-        async def _run() -> None:
-            es.push(Event("start", {"partial": response}))
-            for block in response.content:
-                if isinstance(block, TextContent):
-                    es.push(Event("text_delta", {"delta": block.text, "partial": response}))
-                elif isinstance(block, ThinkingContent):
-                    es.push(Event("thinking_delta", {"delta": block.thinking, "partial": response}))
-                elif isinstance(block, ToolCall):
-                    es.push(Event("toolcall_end", {"tool_call": block, "partial": response}))
-            es.push(Event("done", {"reason": response.stop_reason, "message": response}))
-            es.finish(response)
-
-        task = asyncio.create_task(_run())
-        es._attach(task)
-        return es
 
     def _build_messages(self, messages: list[Message], system: str) -> list[dict]:
         out = []
@@ -543,9 +503,6 @@ class DefaultChat:
         system: str,
         tools: list[Tool],
     ) -> EventStream:
-        if self._mock:
-            return self._emit_mock(self._mock.popleft())
-
         es = EventStream()
 
         payload: dict[str, Any] = {
@@ -581,11 +538,13 @@ class DefaultChat:
             "Content-Type":  "application/json",
         }
 
+        logger.debug(json.dumps(payload, indent=2))
+
         async def _run() -> None:
             msg = AssistantMessage()
             try:
                 async with httpx.AsyncClient(timeout=120.0) as client:
-                    async with client.stream("POST", self.base_url, json=payload, headers=headers) as resp:
+                    async with client.stream("POST", f"{self.base_url}/v1/chat/completions", json=payload, headers=headers) as resp:
                         if resp.status_code >= 400:
                             body = await resp.aread()
                             raise RuntimeError(f"HTTP {resp.status_code}: {body.decode()}")
@@ -681,42 +640,23 @@ class GeminiChat:
         *,
         model: str | None = None,
         api_key: str | None = None,
-        base_url: str = "https://generativelanguage.googleapis.com/v1beta",
+        base_url: str | None = None,
         max_tokens: int = 8_192,
         temperature: float | None = None,
         thinking: bool = False, 
         thinking_budget: int = 8_192,
         tool_choice: Any = None, 
-        mock: list[AssistantMessage] | None = None,
     ) -> None:
         self.model = "gemini-3.1-flash-lite-preview" if model is None else model
-        self.api_key = os.environ.get("GEMINI_API_KEY", "jj") if api_key is None else api_key
-        self.base_url = "https://generativelanguage.googleapis.com/v1beta" if base_url is None else base_url.rstrip("/")
+        self.api_key = os.environ.get("GEMINI_API_KEY") if api_key is None else api_key
+        if not self.api_key:
+            logger.warning('No api-key')
+        self.base_url = "https://generativelanguage.googleapis.com" if base_url is None else base_url.rstrip("/")
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.thinking = thinking
         self.thinking_budget = thinking_budget
         self.tool_choice = tool_choice
-        self._mock: deque[AssistantMessage] = deque(mock) if mock else deque()
-
-    def _emit_mock(self, response: AssistantMessage) -> EventStream:
-        es = EventStream()
-
-        async def _run() -> None:
-            es.push(Event("start", {"partial": response}))
-            for block in response.content:
-                if isinstance(block, TextContent):
-                    es.push(Event("text_delta", {"delta": block.text, "partial": response}))
-                elif isinstance(block, ThinkingContent):
-                    es.push(Event("thinking_delta", {"delta": block.thinking, "partial": response}))
-                elif isinstance(block, ToolCall):
-                    es.push(Event("toolcall_end", {"tool_call": block, "partial": response}))
-            es.push(Event("done", {"reason": response.stop_reason, "message": response}))
-            es.finish(response)
-
-        task = asyncio.create_task(_run())
-        es._attach(task)
-        return es
 
     def _build_contents(self, messages: list[Message]) -> list[dict]:
         out = []
@@ -796,8 +736,6 @@ class GeminiChat:
         system: str,
         tools: list[Tool],
     ) -> EventStream:
-        if self._mock:
-            return self._emit_mock(self._mock.popleft())
 
         es = EventStream()
 
@@ -830,8 +768,10 @@ class GeminiChat:
                 else:
                     payload["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
 
-        url = f"{self.base_url}/models/{self.model}:streamGenerateContent?alt=sse&key={self.api_key}"
+        url = f"{self.base_url}/v1beta/models/{self.model}:streamGenerateContent?alt=sse&key={self.api_key}"
         headers = {"Content-Type": "application/json"}
+
+        logger.debug(json.dumps(payload, indent=2))
 
         async def _run() -> None:
             msg = AssistantMessage()
@@ -923,34 +863,15 @@ class CodexChat:
         max_tokens: int = 8_192,
         temperature: float | None = None,
         tool_choice: Any = None,
-        mock: list[AssistantMessage] | None = None,
     ) -> None:
         self.model = "gpt-5.4-mini" if model is None else model
-        self.api_key = os.environ.get("OPENAI_API_KEY", "jj") if api_key is None else api_key
-        self.base_url = "https://api.openai.com/v1/chat/responses" if base_url is None else base_url.rstrip("/")
+        self.api_key = os.environ.get("OPENAI_API_KEY") if api_key is None else api_key
+        if not self.api_key:
+            logger.warning('No api-key')
+        self.base_url = "https://api.openai.com" if base_url is None else base_url.rstrip("/")
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.tool_choice = tool_choice
-        self._mock: deque[AssistantMessage] = deque(mock) if mock else deque()
-
-    def _emit_mock(self, response: AssistantMessage) -> EventStream:
-        es = EventStream()
-
-        async def _run() -> None:
-            es.push(Event("start", {"partial": response}))
-            for block in response.content:
-                if isinstance(block, TextContent):
-                    es.push(Event("text_delta", {"delta": block.text, "partial": response}))
-                elif isinstance(block, ThinkingContent):
-                    es.push(Event("thinking_delta", {"delta": block.thinking, "partial": response}))
-                elif isinstance(block, ToolCall):
-                    es.push(Event("toolcall_end", {"tool_call": block, "partial": response}))
-            es.push(Event("done", {"reason": response.stop_reason, "message": response}))
-            es.finish(response)
-
-        task = asyncio.create_task(_run())
-        es._attach(task)
-        return es
 
     def _build_input(self, messages: list[Message], system: str) -> list[dict]:
         out = []
@@ -1001,9 +922,6 @@ class CodexChat:
         system: str,
         tools: list[Tool],
     ) -> EventStream:
-        if self._mock:
-            return self._emit_mock(self._mock.popleft())
-
         es = EventStream()
 
         payload: dict[str, Any] = {
@@ -1040,12 +958,14 @@ class CodexChat:
             "Content-Type":  "application/json",
         }
 
+        logger.debug(json.dumps(payload, indent=2))
+
         async def _run() -> None:
             msg = AssistantMessage()
             try:
                 async with httpx.AsyncClient(timeout=120.0) as client:
                     async with client.stream(
-                        "POST", self.base_url,
+                        "POST", f"{self.base_url}/v1/responses",
                         json=payload, headers=headers
                     ) as resp:
                         if resp.status_code >= 400:
@@ -1257,6 +1177,7 @@ class Agent:
             except Exception as exc:
                 result = ToolResult(content=[TextContent(str(exc))], is_error=True)
 
+        logger.info('\n'.join(_t.text for _t in result.content))
         msg = ToolResultMessage(
             tool_call_id=call.id,
             tool_name=call.name,
@@ -1437,6 +1358,7 @@ class BashTool(Tool):
             raise ValueError(f"Command timed out after {params.timeout}s")
         output = stdout.decode(errors="replace")
         exit_code = proc.returncode or 0
+        # result = f"$ {params.command}\n{output}"
         result = str(output) + ' '
         if exit_code != 0:
             result += f"\n[exit code {exit_code}]"
@@ -1584,21 +1506,32 @@ class LsTool(Tool):
         return ToolResult(content=[TextContent("\n".join(entries) if entries else "(empty)")])
 
 
-class ReadASTParams(BaseModel):
+class ReadTreeParams(BaseModel):
     path: str = Field(description="File or directory to inspect (relative to cwd)")
     symbols: list[str] = Field(
         default_factory=list,
         description=(
-            "List of symbol names to look up, e.g. [\"MyClass\", \"my_fn\"]. "
-            "Omit (or pass []) for outline mode."
+            "Symbol names to look up, e.g. [\"MyClass\", \"my_fn\", \"ClassName.method\"]. "
+            "Omit (or pass []) for outline mode. "
+            "Dotted names are accepted — the last component is matched and results "
+            "are labelled with the full qualified name."
         ),
     )
     depth: int = Field(
         default=1,
+        description="Outline mode: nesting depth (1=top-level only, 2=classes+methods).",
+    )
+    kinds: list[str] = Field(
+        default_factory=list,
         description=(
-            "Outline mode: nesting levels (1=top-level only, 2=+methods). "
-            "Symbol mode: alias-expansion hops (0=exact names only, default 1)."
+            "Filter symbol-lookup results by kind. "
+            "Valid values: definition, assignment, call, import, reference. "
+            "Default: definition + assignment + call + import (no bare references)."
         ),
+    )
+    lang: str | None = Field(
+        default=None,
+        description="Override language detection, e.g. 'py', 'ts', 'go'.",
     )
 
     @classmethod
@@ -1612,40 +1545,96 @@ class ReadASTParams(BaseModel):
                 obj = {**obj, "symbols": [raw] if raw else []}
         return super().model_validate(obj, **kw)
 
-class ReadASTTool(Tool):
-    name = "ReadAST"
+
+class ReadTreeTool(Tool):
+    name = "ReadTree"
     description = (
-        "Inspect Python source by AST analysis. Two modes:\n"
+        "Inspect source code using tree-sitter. Works for any supported language "
+        "(Python, JS/TS, Go, Rust, Java, C/C++, Ruby, and more). Two modes:\n"
         "  OUTLINE (no symbols): returns the symbol tree of a file or directory — "
         "class/function/method/var names with line ranges. Use this first to "
         "orient yourself before reading or editing code.\n"
-        "  SYMBOL LOOKUP (symbols=[\"Name\", ...]): returns the definition and every "
-        "reference to those names as raw source snippets. Use this to read specific "
-        "functions or classes. The output is paste-safe for use as old_str in an "
-        "Edit call."
+        "  SYMBOL LOOKUP (symbols=[...]): returns the full source body of every "
+        "definition of those names, plus every call/assignment site with context. "
+        "Output is paste-safe for use as old_str in an Edit call. "
+        "Accepts dotted names like 'ClassName.method' to narrow results."
     )
-    parameters = ReadASTParams
+    parameters = ReadTreeParams
 
     def __init__(self, cwd: str | None = None) -> None:
         self.cwd = cwd or os.getcwd()
 
-    async def execute(self, params: ReadASTParams, signal=None) -> ToolResult:
-        from .symgraph import format_outline, analyze_multi, format_results #.
+    async def execute(self, params: ReadTreeParams, signal=None) -> ToolResult:
+        from .symgraph import (  #.
+            outline_path, print_outline,
+            search_symbols, format_search_results,
+            resolve_lang_ext, Capability,
+        )
+        import io
 
-        target = _resolve(params.path, self.cwd)
+        target   = pathlib.Path(_resolve(params.path, self.cwd))
+        lang_ext = resolve_lang_ext(params.lang) if params.lang else None
 
         if not params.symbols:
-            text = format_outline(target, depth=params.depth)
-            return ToolResult(content=[TextContent(text)])
+            items = outline_path(target, lang_ext=lang_ext, max_depth=params.depth)
+            if not items:
+                return ToolResult(
+                    content=[TextContent(f"No symbols found in: {params.path}")],
+                    is_error=True,
+                )
+            buf = io.StringIO()
+            print_outline(items, use_color=False, file=buf)
+            return ToolResult(content=[TextContent(buf.getvalue())])
 
-        results = analyze_multi(target, params.symbols, depth=params.depth)
-        if not results.definitions and not results.uses:
-            return ToolResult(
-                content=[TextContent(f"No definitions or uses found for: {params.symbols}")],
-                is_error=True,
-            )
-        text = format_results(results, show_defs=True, raw=True)
+        default_kinds = {"definition", "assignment", "call", "import"}
+        filter_kinds  = set(params.kinds) if params.kinds else default_kinds
+        include_refs  = "reference" in filter_kinds
+
+        all_usages, capabilities = search_symbols(
+            params.symbols,
+            target,
+            lang_ext=lang_ext,
+            include_references=include_refs,
+        )
+
+        warnings: list[str] = []
+        for sym, cap in capabilities.items():
+            if cap is Capability.NONE:
+                warnings.append(f"# warning: no grammar support for '{sym}' in this file type")
+            elif cap is Capability.PARTIAL:
+                warnings.append(f"# warning: '{sym}' matched by generic scan (kind may be inaccurate)")
+
+        if filter_kinds != {"definition", "assignment", "call", "import", "reference"}:
+            all_usages = [u for u in all_usages if u.kind in filter_kinds]
+
+        if not all_usages:
+            msg = f"No usages found for: {params.symbols}"
+            if warnings:
+                msg = "\n".join(warnings) + "\n" + msg
+            return ToolResult(content=[TextContent(msg)], is_error=True)
+
+        text = format_search_results(all_usages, raw=True, show_refs=include_refs)
+        if warnings:
+            text = "\n".join(warnings) + "\n\n" + text
         return ToolResult(content=[TextContent(text)])
+
+
+class GetSkillParams(BaseModel):
+    name: str = Field(description="Skill name to retrieve")
+
+class GetSkillTool(Tool):
+    name = "GetSkill"
+    description = "Retrieve the full instructions for a skill by name."
+    parameters = GetSkillParams
+
+    def __init__(self, skills: list[dict]) -> None:
+        self._skills = {s["name"]: s["content"] for s in skills}
+
+    async def execute(self, params: GetSkillParams, signal=None) -> ToolResult:
+        content = self._skills.get(params.name)
+        if content is None:
+            return ToolResult(content=[TextContent(f"Skill '{params.name}' not found.")], is_error=True)
+        return ToolResult(content=[TextContent(content)])
 
 
 def coding_tools(cwd: str | None = None) -> list[Tool]:
@@ -1654,308 +1643,9 @@ def coding_tools(cwd: str | None = None) -> list[Tool]:
 def readonly_tools(cwd: str | None = None) -> list[Tool]:
     return [ReadTool(cwd), GrepTool(cwd), FindTool(cwd), LsTool(cwd)]
 
-def all_tools(cwd: str | None = None) -> list[Tool]:
+def all_tools(cwd: str | None = None, skills: list[dict] | None = None) -> list[Tool]:
     return [ReadTool(cwd), WriteTool(cwd), EditTool(cwd), BashTool(cwd),
-            GrepTool(cwd), FindTool(cwd), LsTool(cwd), ReadASTTool(cwd)]
-
-_PASS = 0
-_FAIL = 0
-
-def _ok(label: str) -> None:
-    global _PASS
-    _PASS += 1
-    print(f"  ✓ {label}")
-
-def _fail(label: str, reason: Any = "") -> None:
-    global _FAIL
-    _FAIL += 1
-    print(f"  ✗ {label}: {reason}")
-
-async def simulate() -> None:
-    global _PASS, _FAIL
-    _PASS = _FAIL = 0
-
-    print("\n=== pie.py simulate ===\n")
-
-    print("--- 1: Plain text exchange ---")
-    try:
-        api = ClaudeChat(
-            model="claude-sonnet-4-20250514", api_key="x",
-            mock=[AssistantMessage(content=[TextContent("Hello!")], stop_reason="stop")],
-        )
-        agent = Agent(api, system="You are helpful.")
-        msg = await agent.run("Hi")
-        texts = [b.text for b in msg.content if isinstance(b, TextContent)]
-        assert texts == ["Hello!"], texts
-        assert msg.stop_reason == "stop"
-        assert len(agent.messages) == 2
-        _ok("plain text response received and stored")
-    except Exception as exc:
-        _fail("plain text exchange", exc)
-
-    print("\n--- 2: Single tool call round-trip ---")
-    try:
-        class EchoParams(BaseModel):
-            message: str
-
-        class EchoTool(Tool):
-            name = "Echo"
-            description = "Echo a message"
-            parameters = EchoParams
-            async def execute(self, params, signal=None):
-                return ToolResult(content=[TextContent(f"Echo: {params.message}")])
-
-        tool_call = ToolCall(id="tc1", name="Echo", arguments={"message": "ping"})
-        api = ClaudeChat(
-            model="claude-sonnet-4-20250514", api_key="x",
-            mock=[
-                AssistantMessage(content=[tool_call], stop_reason="tool_use"),
-                AssistantMessage(content=[TextContent("Done.")], stop_reason="stop"),
-            ],
-        )
-        agent = Agent(api, tools=[EchoTool()])
-        msg = await agent.run("call Echo with ping")
-        assert msg.stop_reason == "stop"
-        assert len(agent.messages) == 4, len(agent.messages)
-        tool_result = agent.messages[2]
-        assert isinstance(tool_result, ToolResultMessage)
-        assert tool_result.content[0].text == "Echo: ping"
-        _ok("tool called, result appended, loop continued to stop")
-    except Exception as exc:
-        _fail("single tool call round-trip", exc)
-
-    print("\n--- 3: Multi-turn tool calls ---")
-    try:
-        class CountParams(BaseModel):
-            n: int
-
-        calls_made = []
-
-        class CountTool(Tool):
-            name = "Count"
-            description = "Count"
-            parameters = CountParams
-            async def execute(self, params, signal=None):
-                calls_made.append(params.n)
-                return ToolResult(content=[TextContent(str(params.n))])
-
-        api = ClaudeChat(
-            model="claude-sonnet-4-20250514", api_key="x",
-            mock=[
-                AssistantMessage(content=[ToolCall("t1", "Count", {"n": 1})], stop_reason="tool_use"),
-                AssistantMessage(content=[ToolCall("t2", "Count", {"n": 2})], stop_reason="tool_use"),
-                AssistantMessage(content=[TextContent("counted")], stop_reason="stop"),
-            ],
-        )
-        agent = Agent(api, tools=[CountTool()])
-        msg = await agent.run("count twice")
-        assert msg.stop_reason == "stop"
-        assert calls_made == [1, 2], calls_made
-        _ok("multi-turn tool loop ran correctly")
-    except Exception as exc:
-        _fail("multi-turn tool calls", exc)
-
-    print("\n--- 4: Unknown tool ---")
-    try:
-        api = ClaudeChat(
-            model="claude-sonnet-4-20250514", api_key="x",
-            mock=[
-                AssistantMessage(content=[ToolCall("t1", "nonexistent", {})], stop_reason="tool_use"),
-                AssistantMessage(content=[TextContent("ok")], stop_reason="stop"),
-            ],
-        )
-        agent = Agent(api)
-        msg = await agent.run("call nonexistent")
-        tool_result = next(m for m in agent.messages if isinstance(m, ToolResultMessage))
-        assert tool_result.is_error
-        assert "not found" in tool_result.content[0].text
-        _ok("unknown tool produces is_error=True result")
-    except Exception as exc:
-        _fail("unknown tool", exc)
-
-    print("\n--- 5: Thinking block ---")
-    try:
-        api = ClaudeChat(
-            model="claude-sonnet-4-20250514", api_key="x",
-            mock=[AssistantMessage(
-                content=[ThinkingContent("hmm..."), TextContent("answer")],
-                stop_reason="stop",
-            )],
-        )
-        events_seen = []
-        agent = Agent(api)
-        agent.subscribe(lambda e: events_seen.append(e.type))
-        await agent.run("think")
-        assert "thinking_delta" in events_seen
-        assert "text_delta" in events_seen
-        _ok("thinking and text events both emitted")
-    except Exception as exc:
-        _fail("thinking block", exc)
-
-    print("\n--- 6: Abort ---")
-    try:
-        class SlowParams(BaseModel):
-            pass
-
-        class SlowTool(Tool):
-            name = "slow"
-            description = "Slow tool"
-            parameters = SlowParams
-            async def execute(self, params, signal=None):
-                return ToolResult(content=[TextContent("done")])
-
-        api = ClaudeChat(
-            model="claude-sonnet-4-20250514", api_key="x",
-            mock=[
-                AssistantMessage(content=[ToolCall("t1", "slow", {})], stop_reason="tool_use"),
-                AssistantMessage(content=[TextContent("after abort")], stop_reason="stop"),
-            ],
-        )
-        agent = Agent(api, tools=[SlowTool()])
-        agent.abort()  
-        msg = await agent.run("go slow")
-        assert msg.stop_reason == "aborted", msg.stop_reason
-        _ok("abort signal stops loop after tool execution")
-    except Exception as exc:
-        _fail("abort", exc)
-
-    print("\n--- 7: Branch isolation ---")
-    try:
-        api = ClaudeChat(
-            model="claude-sonnet-4-20250514", api_key="x",
-            mock=[
-                AssistantMessage(content=[TextContent("parent")], stop_reason="stop"),
-                AssistantMessage(content=[TextContent("child")], stop_reason="stop"),
-            ],
-        )
-        agent = Agent(api)
-        await agent.run("parent prompt")
-        parent_len = len(agent.messages)
-
-        child = agent.branch()
-        await child.run("child prompt")
-
-        assert len(agent.messages) == parent_len, "parent messages mutated by branch"
-        assert len(child.messages) > parent_len, "child has more messages"
-        _ok("branch messages diverge, parent unaffected")
-    except Exception as exc:
-        _fail("branch isolation", exc)
-
-    print("\n--- 8: Parallel tool calls ---")
-    try:
-        start_times: list[float] = []
-        end_times: list[float] = []
-
-        class DelayParams(BaseModel):
-            ms: int
-
-        class DelayTool(Tool):
-            name = "delay"
-            description = "Delay"
-            parameters = DelayParams
-            async def execute(self, params, signal=None):
-                start_times.append(time.time())
-                await asyncio.sleep(params.ms / 1000)
-                end_times.append(time.time())
-                return ToolResult(content=[TextContent("ok")])
-
-        api = ClaudeChat(
-            model="claude-sonnet-4-20250514", api_key="x",
-            mock=[
-                AssistantMessage(content=[
-                    ToolCall("t1", "delay", {"ms": 100}),
-                    ToolCall("t2", "delay", {"ms": 100}),
-                ], stop_reason="tool_use"),
-                AssistantMessage(content=[TextContent("done")], stop_reason="stop"),
-            ],
-        )
-        agent = Agent(api, tools=[DelayTool()])
-        t0 = time.time()
-        await agent.run("run two delays")
-        elapsed = time.time() - t0
-        assert elapsed < 0.18, f"took {elapsed:.3f}s — likely sequential"
-        _ok(f"two 100ms tools ran in parallel ({elapsed*1000:.0f}ms)")
-    except Exception as exc:
-        _fail("parallel tool calls", exc)
-
-    print("\n--- 9: DefaultChat mock ---")
-    try:
-        api = DefaultChat(
-            model="gpt-4o", api_key="x",
-            mock=[AssistantMessage(content=[TextContent("hi from codex")], stop_reason="stop")],
-        )
-        agent = Agent(api)
-        msg = await agent.run("hello")
-        assert msg.content[0].text == "hi from codex"
-        _ok("DefaultChat mock path works")
-    except Exception as exc:
-        _fail("DefaultChat mock", exc)
-
-    print("\n--- 10: Tool argument validation ---")
-    try:
-        class StrictParams(BaseModel):
-            value: int
-
-        class StrictTool(Tool):
-            name = "strict"
-            description = "Strict"
-            parameters = StrictParams
-            async def execute(self, params, signal=None):
-                return ToolResult(content=[TextContent(str(params.value))])
-
-        api = ClaudeChat(
-            model="claude-sonnet-4-20250514", api_key="x",
-            mock=[
-                AssistantMessage(content=[ToolCall("t1", "strict", {"value": "not_an_int"})], stop_reason="tool_use"),
-                AssistantMessage(content=[TextContent("recovered")], stop_reason="stop"),
-            ],
-        )
-        agent = Agent(api, tools=[StrictTool()])
-        msg = await agent.run("call with bad args")
-        tool_result = next(m for m in agent.messages if isinstance(m, ToolResultMessage))
-        assert tool_result.is_error
-        assert msg.stop_reason == "stop"
-        _ok("invalid tool args produce is_error result, loop recovers")
-    except Exception as exc:
-        _fail("tool argument validation", exc)
-
-    print("\n--- 11: Subscribe / unsubscribe ---")
-    try:
-        api = ClaudeChat(
-            model="claude-sonnet-4-20250514", api_key="x",
-            mock=[
-                AssistantMessage(content=[TextContent("first")], stop_reason="stop"),
-                AssistantMessage(content=[TextContent("second")], stop_reason="stop"),
-            ],
-        )
-        agent = Agent(api)
-        seen: list[str] = []
-        unsub = agent.subscribe(lambda e: seen.append(e.type))
-        await agent.run("first")
-        unsub()
-        seen_after_unsub = len(seen)
-        await agent.run("second")
-        assert len(seen) == seen_after_unsub, "events received after unsubscribe"
-        _ok("unsubscribe stops event delivery")
-    except Exception as exc:
-        _fail("subscribe/unsubscribe", exc)
-
-    print("\n--- 12: Mock exhaustion ---")
-    try:
-        api = ClaudeChat(
-            model="claude-sonnet-4-20250514", api_key="x",
-            mock=[AssistantMessage(content=[TextContent("only one")], stop_reason="stop")],
-        )
-        agent = Agent(api)
-        await agent.run("first")
-        assert len(api._mock) == 0
-        _ok("mock deque exhausted after use")
-    except Exception as exc:
-        _fail("mock exhaustion", exc)
-
-    print(f"\n=== simulate complete: {_PASS} passed, {_FAIL} failed ===")
-    if _FAIL:
-        sys.exit(1)
+            GrepTool(cwd), FindTool(cwd), LsTool(cwd), ReadTreeTool(cwd)]
 
 _REPL_HELP = """\
 Commands:
@@ -2029,77 +1719,95 @@ def read_input(prompt: str = "\033[32m≫\033[0m ") -> str:
 
     return "".join(buf).strip()
 
-async def _repl(
+async def repl(
     api: Any,
-    system: str = "You are a helpful assistant.",
+    system: str,
     cwd: str | None = None,
     tools: list[str] | None = None,
+    skills: list[dict] | None = None,
 ) -> None:
     is_tty = sys.stdin.isatty()
     available_tools = all_tools(cwd)
     if tools is not None:
         requested_names = {name.lower() for name in tools}
         available_tools = [
-            t for t in available_tools 
+            t for t in available_tools
             if t.name.lower() in requested_names
         ]
         found_names = {t.name.lower() for t in available_tools}
         for req in requested_names:
             if req not in found_names:
-                print(f"Warning: Tool '{req}' is not recognized.")
+                logger.warning(f"Tool '{req}' is not recognized.")
+    if skills:
+        available_tools.append(GetSkillTool(skills))
     agent = Agent(api, system=system, tools=available_tools)
     loop = asyncio.get_running_loop()
+
     _suppress = False
-    last_ev_type = ""
-    last_delta = ""
+    last_block = ""
+    trail = ""  
+
     async def on_event(event: AgentEvent) -> None:
-        # logger.debug(event) # □
-        nonlocal _suppress, is_tty, last_ev_type, last_delta
+        nonlocal _suppress, last_block, trail
+
+        def emit(delta, block, prefix="", suffix=""):
+            nonlocal last_block, trail
+            changed = last_block != block
+            if changed:
+                trail = ""
+                delta = delta.lstrip("\n")
+                if not delta:
+                    return          
+                if last_block:
+                    print("\n", end="")
+                last_block = block
+            else:
+                last_block = block
+                if trail:
+                    print(trail, end="")
+                trail = ""
+            rstripped = delta.rstrip("\n")
+            trail = delta[len(rstripped):]
+            if rstripped:
+                print(prefix + rstripped + suffix, end="", flush=True)
+
         if event.type == "text_delta":
             delta = event.payload.get("delta", "")
-
-
             if "<tool_call>" in delta:
                 before, _, delta = delta.partition("<tool_call>")
-                print(before.strip(), end="", flush=True)
+                if before:
+                    emit(before, "text")
                 _suppress = True
             if "</tool_call>" in delta:
-                _, _, delta = delta.partition("<tool_call>")
+                _, _, delta = delta.partition("</tool_call>")
                 _suppress = False
-            if not last_delta:
-                delta = delta.lstrip()
-            if last_ev_type and last_ev_type[:4] != event.type[:4] and last_delta and not last_delta[-1].isspace() and delta and not delta[0].isspace() and delta.strip():
-                print()
-            last_delta = delta
-            last_ev_type = event.type
-            if not _suppress:
-                print(delta, end="", flush=True)
+            if not delta or _suppress:
+                return
+            emit(delta, "text")
+
         elif is_tty:
             if event.type == "thinking_delta":
                 delta = event.payload.get("delta", "")
-                if not last_delta:
-                    delta = delta.lstrip()
-                if last_ev_type and last_ev_type[:4] != event.type[:4] and last_delta and not last_delta[-1].isspace() and delta and not delta[0].isspace() and delta.strip():
-                    print()
-                last_delta = delta
-                last_ev_type = event.type
-                print(f"\033[2m{delta.rstrip('\n')}\033[0m", end="", flush=True)
+                if not delta:
+                    return
+                emit(delta, "thinking", prefix="\033[2m", suffix="\033[0m")
+
             elif event.type == "tool_start":
-                delta = f"{event.payload['name']} {json.dumps(event.payload['args'])[:120]} "
-                last_delta = delta
-                last_ev_type = event.type
-                print(f"\033[33m{delta}\033[0m", end="", flush=True)
-            elif event.type == "tool_result":
-                msg = event.payload["message"]
-                delta = "\n".join(b.text for b in msg.content if isinstance(b, TextContent))
-                logger.debug(delta)
-                # print(f"\n\n\033[36m{delta}\033[0m\n", end="", flush=True) # □
+                text = event.payload['name'] + " "
+                if event.payload['args']:
+                    text += json.dumps(event.payload['args']) + " "
+                emit(text, "tool", prefix="\033[33m", suffix="\033[0m")
+
             elif event.type == "tool_end":
                 if event.payload.get("is_error"):
                     print(" \033[31m(error)\033[0m", flush=True)
+
             elif event.type == "error":
                 err = event.payload.get("error")
                 print(f"\n\033[31m[error]\033[0m {getattr(err, 'error_message', str(err))}\n")
+
+            elif event.type == "agent_end":
+                last_block = ""
 
     agent.subscribe(on_event)
     if is_tty:
@@ -2118,9 +1826,8 @@ async def _repl(
         if not user_input:
             continue
 
-        last_delta = ""
-        last_ev_type = ""
-        logger.info(user_input)
+        last_block = ""
+        logger.debug(user_input)
 
         if user_input.startswith("/"):
             cmd, _, arg = user_input.partition(" ")
@@ -2131,26 +1838,32 @@ async def _repl(
                 agent.messages.clear()
                 print("[history cleared]")
             elif cmd == "/history":
+                def truncate(text, limit=80):
+                    text = text.replace('\n', ' ').strip()
+                    return (text[:limit] + "‥") if len(text) > limit else text
+
                 for i, m in enumerate(agent.messages):
                     if isinstance(m, UserMessage):
-                        content = m.content if isinstance(m.content, str) else str(m.content)[:80]
-                        print(f"  {i:2d} [user] {content[:80]}")
+                        content = m.content if isinstance(m.content, str) else str(m.content)
+                        print(f"  {i:2d} [user] {truncate(content)}")
+                        
                     elif isinstance(m, AssistantMessage):
                         text = "".join(b.text for b in m.content if isinstance(b, TextContent))
-                        print(f"  {i:2d} [assistant] {text[:80]}")
+                        print(f"  {i:2d} [assistant] {truncate(text)}")
+                        
                     elif isinstance(m, ToolResultMessage):
-                        text = m.content[0].text[:60] if m.content else ""
-                        print(f"  {i:2d} [tool:{m.tool_name}] {text}")
+                        text = m.content[0].text if m.content else ""
+                        print(f"  {i:2d} [tool:{m.tool_name}] {truncate(text, limit=60)}")
             elif cmd == "/tools":
                 for t in agent.tools:
-                    print(f"  {t.name} — {t.description[:60]}")
+                    print(f"  {t.name} — {t.description}")
             elif cmd == "/branch":
                 prompt = arg.strip() or "Summarise what we have discussed."
                 print(f"[branching: '{prompt}']")
                 child = agent.branch()
                 result = await child.run(prompt)
                 texts = [b.text for b in result.content if isinstance(b, TextContent)]
-                print("\n[branch result]:", "".join(texts)[:300])
+                print("\n[branch result]:", "".join(texts).strip())
             elif cmd == "/abort":
                 agent.abort()
                 print("[abort signalled]")
@@ -2158,7 +1871,7 @@ async def _repl(
                 print(f"Unknown command: {cmd}  (try /help)")
             continue
 
-        if is_tty:  
+        if is_tty:
             if user_input.lower() in {"exit", "quit"}:
                 print("Bye!")
                 break
@@ -2169,66 +1882,113 @@ async def _repl(
         if not is_tty:
             break
 
-def run_repl(
+def collect_skills(skills_dir, skills=None):
+    skills = [] if skills is None else skills
+    if skills_dir is not None:
+        root = pathlib.Path(skills_dir)
+        if root.exists():
+            for skill_dir in sorted(root.iterdir()):
+                md = skill_dir / "SKILL.md"
+                if not md.is_file():
+                    continue
+                text = md.read_text(encoding="utf-8", errors="replace")
+                name = skill_dir.name
+                description = ""
+                if text.startswith("---"):
+                    end = text.find("---", 3)
+                    if end != -1:
+                        fm = text[3:end]
+                        n = re.search(r"^name:\s*(.+)$", fm, re.MULTILINE)
+                        if n:
+                            name = n.group(1).strip()
+                        m = re.search(r"^description:\s*(.+)$", fm, re.MULTILINE)
+                        if m:
+                            description = m.group(1).strip()
+                        text = text[end+3:].strip()
+                        if not n and not m:
+                            continue
+                        skills.append({"name": name, "description": description, "content": text})
+
+    skill_prompt = "Available skills (use GetSkill to load full instructions when needed):\n" + '\n'.join(f"- {s['name']}: {s['description']}" for s in skills) if skills else ''
+    return skills, skill_prompt
+
+def harness(
+    *,
     base_url: str | None = None,
     model: str | None = None,
-    provider: Literal["claude", "codex", "gemini", "default"] = "default",
-    system: str = "You are a helpful assistant.",
+    api: Literal["claude", "codex", "gemini", "deepseek", "pie"] = "pie",
+    system: str = "",
+    sdir: str| None = None,
+    skills: list[dict] | None = None,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     tools: list[str] | None = None,
-    api_key: str = None,
+    api_key: str | None = None,
 ) -> None:
     if env is not None:
         os.environ.clear()
         os.environ.update(env)
     cwd = os.getcwd() if cwd is None else cwd
+    sdir = cwd if sdir is None else sdir
+    skills = [] if skills is None else skills
+    skills, skill_prompt = collect_skills(sdir, skills)
+    system = '\n\n'.join(filter(None, [system, skill_prompt]))
 
-    if provider == "claude":
+    if api == "claude":
         api = ClaudeChat(model=model, api_key=api_key, base_url=base_url)
-    elif provider == "gemini":
+    elif api == "gemini":
         api = GeminiChat(model=model, api_key=api_key, base_url=base_url)
-    elif provider == "codex":
+    elif api == "codex":
         api = CodexChat(model=model, api_key=api_key, base_url=base_url)
     else:
         api = DefaultChat(model=model, api_key=api_key, base_url=base_url)
     try:
-        asyncio.run(_repl(api, system=system, cwd=cwd, tools=tools))
+        asyncio.run(repl(api, system=system, cwd=cwd, tools=tools, skills=skills))
     except KeyboardInterrupt:
         print("\nExiting...")
+
 
 def main():
     from .main import setup_logger #.
     setup_logger(log_file='log.json', console=True)
     parser = argparse.ArgumentParser(description="Pie REPL")
-    parser.add_argument("-d", "--deepseek", action="store_true", help="Shortcut for --url https://api.deepseek.com --model deepseek-v4-flash")
-    parser.add_argument("--model", type=str, default=None, help="Model name")
-    parser.add_argument("--provider", choices=["claude", "codex", "gemini", "default"], default="default", help="API Provider")
+    parser.add_argument("-a", "--api", choices=["claude", "codex", "gemini", "deepseek", "pie"], default="pie", help="API Provider")
+    parser.add_argument("-m", "--model", type=str, default=None, help="Model name")
+    parser.add_argument("-t", "--tools", nargs='+', help="List of tools to enable (e.g., Bash Read Ls). Defaults to all.")
     parser.add_argument("--url", type=str, default="http://127.0.0.1:8000", help="Base URL for the API")
-    parser.add_argument("--system", type=str, default="You are a helpful assistant.", help="System prompt")
+    parser.add_argument("--system", type=str, default="", help="System prompt")
+    parser.add_argument("--skill", type=str, default=None, help="Directory to scan for skills")
     parser.add_argument("--cwd", type=str, default=None, help="Current working directory")
-    parser.add_argument("--tools", nargs='+', help="List of tools to enable (e.g., Bash Read Ls). Defaults to all.")
-    parser.add_argument("--simulate", action="store_true", help="Run in simulation mode instead of REPL")
+    parser.add_argument("--key", type=str, default=None, help="API key")
     args = parser.parse_args()
+    logger.debug(args)
 
     url = args.url
     model = args.model
     tools = args.tools
-    if args.deepseek:
-        url = "https://api.deepseek.com"
-        model = "deepseek-v4-flash"
-        # tools = [] # □
-    if args.simulate:
-        asyncio.run(simulate())
-    else:
-        run_repl(
-            provider=args.provider, 
-            system=args.system, 
-            cwd=args.cwd,
-            model=model, 
-            base_url=url, 
-            tools=tools,
-        )
+
+    api_key = args.key
+
+    if args.api in ["deepseek", "gemini"]:
+        if args.api=="deepseek":
+            api_key = os.environ.get('DEEPSEEK_API_KEY') if api_key is None else api_key
+            url = "https://api.deepseek.com" if api_key else url
+            model = "deepseek-v4-flash" if model is None else model
+        elif args.api=='gemini':
+            api_key = os.environ.get('GEMINI_API_KEY') if api_key is None else api_key
+            url = "https://generativelanguage.googleapis.com" if api_key else url
+            model = "gemini-3.1-flash-lite-preview" if model is None else model
+        tools = [] if tools is None else tools # □
+    harness(
+        api=args.api, 
+        system=args.system, 
+        cwd=args.cwd,
+        model=model, 
+        base_url=url, 
+        tools=tools,
+        sdir=args.skill,
+        api_key=api_key
+    )
 
 if __name__ == "__main__":
     main()
