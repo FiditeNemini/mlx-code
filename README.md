@@ -8,7 +8,7 @@ Modern coding agents are like luxury apartments: impressive and shiny, but you d
 
 I wanted a [backyard shed](https://poyo.co/note/20260202T150723/) for myself. Something I understand end to end, can break on purpose, and fix without filing a support ticket.
 
-`mlx-code` is that shed. It’s deliberately minimal, extremely transparent, and designed around one core idea: the [feedback loop](https://www.robert-glaser.de/what-if-iteration-is-all-we-need/) is the thing that matters, not the interface around it. The tighter and faster you can close the loop between intent and output, the better the work gets. Everything else is ceremony. 
+`mlx-code` is that shed. It’s deliberately minimal, extremely transparent, and designed around one core idea: [feedback loop](https://www.robert-glaser.de/what-if-iteration-is-all-we-need/) is the thing that matters, not the interface around it. The tighter and faster you can close the loop between intent and output, the better the work gets. Everything else is ceremony. 
 
 So the terminal stays the interface. Text in, text out. No full-screen TUI fighting your terminal emulator, no proprietary context format, no behavior that shifts between versions. 
 
@@ -18,8 +18,8 @@ So the terminal stays the interface. Text in, text out. No full-screen TUI fight
 
 `mlx-code` has two lightweight, loosely coupled pieces:
 
-- [**main.py**](https://github.com/JosefAlbers/mlx-code/blob/main/mlx_code/main.py): A clean MLX server for Apple Silicon. It loads quantized models and exposes a standard OpenAI-compatible completions endpoint.
-- [**pie.py**](https://github.com/JosefAlbers/mlx-code/blob/main/mlx_code/pie.py) — A minimal but powerful agent harness (Python port of Mario Zechner's awesome [pi](https://github.com/badlogic/pi-mono)).
+- [**main.py**](https://github.com/JosefAlbers/mlx-code/blob/main/mlx_code/main.py): LLM server for Apple Silicon. It loads quantized models and exposes a standard OpenAI-compatible completions endpoint.
+- [**pie.py**](https://github.com/JosefAlbers/mlx-code/blob/main/mlx_code/pie.py) — Agentic harness based on Mario Zechner's awesome [pi](https://github.com/badlogic/pi-mono)).
 
 The CLI is intentionally boring and familiar:
 
@@ -27,7 +27,11 @@ The CLI is intentionally boring and familiar:
 - `me` — Remote agent (pie REPL against Claude, DeepSeek, Gemini, etc.)
 - `md` — View and filter structured JSON logs
 
-Agentic work lives on a spectrum from tight, synchronous co-driving to loose, asynchronous delegation — the right tool for both ends is a loop that closes quickly, not a UI that abstracts it away. Text streams compose. They pipe. They chain. They work the same way they did thirty years ago and will work thirty years from now. That's the [constraint](https://jordanlord.co.uk/blog/3-constraints/) that shapes the whole tool.
+Agentic work lives on a spectrum from tight, synchronous co-driving to loose, asynchronous delegation. The right tool for both ends is a loop that closes quickly, not a UI that abstracts it away. 
+
+Text streams compose. They pipe. They chain. They work the same way they did thirty years ago and will work thirty years from now. 
+
+That's the [constraint](https://jordanlord.co.uk/blog/3-constraints/) that shapes the whole tool.
 
 ## Features
 
