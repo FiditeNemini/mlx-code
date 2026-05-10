@@ -8,7 +8,7 @@ Modern coding agents are like luxury apartments: impressive and shiny, but you d
 
 I wanted a [backyard shed](https://poyo.co/note/20260202T150723/) for myself. Something I understand end to end, can break on purpose, and fix without filing a support ticket.
 
-mlx-code is that shed. It’s deliberately minimal, extremely transparent, and designed around one core idea: the feedback [loop](https://www.robert-glaser.de/what-if-iteration-is-all-we-need/) is the thing that matters, not the interface around it. The tighter and faster you can close the loop between intent and output, the better the work gets. Everything else is ceremony. 
+`mlx-code` is that shed. It’s deliberately minimal, extremely transparent, and designed around one core idea: the [feedback loop](https://www.robert-glaser.de/what-if-iteration-is-all-we-need/) is the thing that matters, not the interface around it. The tighter and faster you can close the loop between intent and output, the better the work gets. Everything else is ceremony. 
 
 So the terminal stays the interface. Text in, text out. No full-screen TUI fighting your terminal emulator, no proprietary context format, no behavior that shifts between versions. 
 
@@ -16,10 +16,10 @@ So the terminal stays the interface. Text in, text out. No full-screen TUI fight
 
 ## How It Works
 
-mlx-code has two lightweight, loosely coupled pieces:
+`mlx-code` has two lightweight, loosely coupled pieces:
 
-- **main.py**: A clean MLX server for Apple Silicon. It loads quantized models and exposes a standard OpenAI-compatible completions endpoint.
-- **pie.py** — A minimal but powerful agent harness (Python port of Mario Zechner's awesome [pi](https://github.com/badlogic/pi-mono)).
+- [**main.py**](https://github.com/JosefAlbers/mlx-code/blob/main/mlx_code/main.py): A clean MLX server for Apple Silicon. It loads quantized models and exposes a standard OpenAI-compatible completions endpoint.
+- [**pie.py**](https://github.com/JosefAlbers/mlx-code/blob/main/mlx_code/pie.py) — A minimal but powerful agent harness (Python port of Mario Zechner's awesome [pi](https://github.com/badlogic/pi-mono)).
 
 The CLI is intentionally boring and familiar:
 
@@ -27,12 +27,12 @@ The CLI is intentionally boring and familiar:
 - `me` — Remote agent (pie REPL against Claude, DeepSeek, Gemini, etc.)
 - `md` — View and filter structured JSON logs
 
-Agentic work lives on a spectrum from tight, synchronous co-driving to loose, asynchronous delegation — the right tool for both ends is a loop that closes quickly, not a UI that abstracts it away. Text streams compose. They pipe. They chain. They work the same way they did thirty years ago and will work thirty years from now. That's the constraint that shapes the whole tool.
+Agentic work lives on a spectrum from tight, synchronous co-driving to loose, asynchronous delegation — the right tool for both ends is a loop that closes quickly, not a UI that abstracts it away. Text streams compose. They pipe. They chain. They work the same way they did thirty years ago and will work thirty years from now. That's the [constraint](https://jordanlord.co.uk/blog/3-constraints/) that shapes the whole tool.
 
 ## Features
 
 - **Multi-Provider Compatibility**: Translates and handles requests formatted for Claude, Gemini, Codex, and DeepSeek.
-- **Built-in REPL & Tools**: `pie` is a fully-featured REPL with tool execution and reasoning token support.
+- **Built-in REPL & Tools**: [`pie`](https://github.com/JosefAlbers/mlx-code/blob/main/mlx_code/pie.py) is a fully-featured REPL with tool execution and reasoning token support.
 - **Prompt Caching**: KV cache is saved to disk and reused across requests automatically.
 - **Server Mode**: Spin up a local LLM server with one command.
 
@@ -59,12 +59,8 @@ mc --leash codex
 mc --leash claude
 mc --leash pie 
 
-# Use a local model
-mc --model mlx-community/Qwen3.5-4B-OptiQ-4bit
-mc --leash none       # server only, no harness
-
-# Change server address
-mc --host 0.0.0.0 --port 9000
+# Server only, no harness
+mc --leash none
 
 # Limit available tools
 mc --tools Ls ReadTree Edit
@@ -88,7 +84,7 @@ me --api codex
 # Use a specific model
 me --api deepseek --model deepseek-chat
 
-# Point at a custom endpoint
+# Point to LLM API endpoint
 me --url http://localhost:9000
 ```
 
@@ -102,16 +98,7 @@ md --filter lvl:10;file:main,pie
 md --out picks
 ```
 
-## Credits
-
-- `main.py`: Built on [mlx](https://github.com/ml-explore/mlx) and [mlx-lm](https://github.com/ml-explore/mlx-lm) by Apple.
-- `pie.py`: Adapted from [pi](https://github.com/badlogic/pi-mono) by Mario Zechner (MIT License).
-
-## Licence
-
-Apache License 2.0 — see LICENSE for details.
-
-<details><summary>...</summary><pre>
+<details><summary>Click to expand</summary><pre>
 
 ~/tmp> mc
 
@@ -449,7 +436,7 @@ Apache License 2.0 — see LICENSE for details.
 
     The tool is particularly useful for developers who need precise, language-aware code navigation and search capabilities without relying on IDE-specific features.
 
-~/tmp> python log.py -o test
+~/tmp> md -o test
 
     ┌─ logs ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐┌─ detail ──────────────────────────────────────────────────────────────────────────┐
     │ TIME      LVL       FILE              FUNC              MESSAGE                                                            …││ time       : 2026-05-09T17:35:17.021887+00:00                                     │
@@ -579,6 +566,14 @@ Apache License 2.0 — see LICENSE for details.
 
     **Bottom line:** `ReadTree` is a sharp tool for context efficiency — it can slash input size dramatically for tasks like code explanation, and the smaller context window often allows the model to think faster and more focused.
 
-~/tmp[1 jobs]> hx --capture
-
 </pre></details><br>
+
+## Credits
+
+- `main.py`: Built on [mlx](https://github.com/ml-explore/mlx) and [mlx-lm](https://github.com/ml-explore/mlx-lm) by Apple.
+- `pie.py`: Adapted from [pi](https://github.com/badlogic/pi-mono) by Mario Zechner (MIT License).
+
+## Licence
+
+Apache License 2.0 — see LICENSE for details.
+
