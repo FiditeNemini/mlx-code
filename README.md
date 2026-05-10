@@ -25,7 +25,7 @@ The CLI is intentionally boring and familiar:
 
 - `mc`: Local agent (LLM server ± harness)
 - `me`: Harness. Connects to any compatible API (Claude, DeepSeek, Gemini, OpenAI, or local `mc`)
-- `md`: Log viewer. View and filter structured JSON logs
+- `md`: Log viewer
 
 Agentic work lives on a spectrum from tight, synchronous co-driving to loose, asynchronous delegation. The right tool for both ends is a loop that closes quickly, not a UI that abstracts it away. 
 
