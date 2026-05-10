@@ -51,7 +51,7 @@ mc
 
 ## Command Line Interfaces
 
-### `mc` — Local agent (LLM server ± harness)
+### `mc`: Local agent (LLM server ± harness)
 
 ```bash
 # Default: starts local MLX server and launches the default pie harness
@@ -72,7 +72,7 @@ mc --tools Ls ReadTree Edit
 echo "explain symgraph.py" | mc -d | cat - PLAN.md | mc
 ```
 
-### `me` — Harness
+### `me`: Harness
 
 ```bash
 # Default: connects to local server at 127.0.0.1:8000
@@ -91,7 +91,7 @@ me --api deepseek --model deepseek-v4-pro
 me --url http://localhost:9000
 ```
 
-### `md` — Viewer
+### `md`: Viewer
 
 View and filter structured JSON logs from any session.
 
