@@ -23,9 +23,9 @@ So the terminal stays the interface. Text in, text out. No full-screen TUI fight
 
 The CLI is intentionally boring and familiar:
 
-- `mc` — Local agent (MLX server + pie REPL)
-- `me` — Remote agent (pie REPL against Claude, DeepSeek, Gemini, etc.)
-- `md` — View and filter structured JSON logs
+- `mc`: Local agent (LLM server ± harness)
+- `me`: Harness. Connects to any compatible API (Claude, DeepSeek, Gemini, OpenAI, or local `mc`)
+- `md`: Log viewer. View and filter structured JSON logs
 
 Agentic work lives on a spectrum from tight, synchronous co-driving to loose, asynchronous delegation. The right tool for both ends is a loop that closes quickly, not a UI that abstracts it away. 
 
@@ -51,17 +51,16 @@ mc
 
 ## Command Line Interfaces
 
-### `mc` — Local agent (MLX server + harness)
+### `mc` — Local agent (LLM server ± harness)
 
 ```bash
-# Default: starts local MLX server and launches pie REPL
+# Default: starts local MLX server and launches the default pie harness
 mc
 
 # Choose a different harness
 mc --leash gemini
 mc --leash codex
 mc --leash claude
-mc --leash pie 
 
 # Server only, no harness
 mc --leash none
@@ -73,7 +72,7 @@ mc --tools Ls ReadTree Edit
 echo "explain symgraph.py" | mc -d | cat - PLAN.md | mc
 ```
 
-### `me` — Remote agent (pie REPL against any API)
+### `me` — Harness
 
 ```bash
 # Default: connects to local server at 127.0.0.1:8000
