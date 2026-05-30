@@ -2,7 +2,7 @@
 
 A lightweight coding agent built on Apple's MLX framework.
 
-![demo](https://raw.githubusercontent.com/JosefAlbers/mlx-code/main/assets/mlx-code.gif)
+[![demo](https://raw.githubusercontent.com/JosefAlbers/mlx-code/main/assets/mlx-code.gif)](https://youtu.be/0lkY7YQCyCo)
 
 ---
 
@@ -19,7 +19,7 @@ A lightweight coding agent built on Apple's MLX framework.
 ## Quick Start
 
 ```bash
-pip install mlx-code[all]
+pip install mlx-code
 mlc
 ```
 
@@ -59,7 +59,7 @@ mlc --skill ./my-skills
 mlc --resume <commit-hash>
 
 # Because `mlc` reads from stdin when it isn't a TTY, it composes naturally with shell pipes:
-echo "explain lsp.py" | mlc -a deepseek | cat - PLAN.md | mlc
+echo "Here's the solution you proposed: <excerpt>$(mlc -p "write code for a chrome extension to play youtube x5 speed")</excerpt> Now argue against it. What are the edge cases this doesn't handle? What assumptions did you make that might not hold in a production system? What would you change if you knew this code would be read by a senior engineer in a security audit?" | mlc
 ```
 
 ### `mlc-run`: harness only
@@ -77,10 +77,7 @@ mlc-run --api deepseek --model deepseek-v4-pro
 mlc-run --api codex
 
 # Custom endpoint
-mlc-run --url http://localhost:9000
-
-# With skills
-mlc-run --skill ./my-skills
+echo "explain lsp.py" | mlc-run -a deepseek | cat - PLAN.md | mlc-run --url http://localhost:9000
 ```
 
 ---

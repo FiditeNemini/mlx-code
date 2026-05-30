@@ -45,7 +45,10 @@ class StreamLogger:
                 self.fp.write(self._line_prefix())
                 self._at_line_start = False
             self.fp.write(part)
-        self.fp.flush()
+        try:
+            self.fp.flush()
+        except:
+            pass
 
     @classmethod
     def attach_to_child(cls, child_agent, parent_ctx, tool_name="sub"):

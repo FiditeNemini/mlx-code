@@ -11,7 +11,7 @@ import logging
 import random
 from abc import ABC, abstractmethod
 from typing import Any, Literal
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -438,10 +438,18 @@ class AgentParams(BaseModel):
     system: str | None = Field(
         default=None, description="System prompt override. Defaults to parent."
     )
-    tools: list[str] | str | None = Field(
-        default=None,
-        description="Restrict tools for the sub-agent, e.g. ['Read', 'Bash']. Defaults to all parent tools.",
+    tools: list[str] = Field(
+        description="Tools available to the sub-agent. Must be an explicit subset of the parent's tools."
     )
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def coerce_tools(cls, v):
+        if isinstance(v, str):
+            v = json.loads(v)
+        if not isinstance(v, list):
+            raise ValueError("tools must be a list of strings")
+        return v
 
 
 class AgentTool(Tool):
@@ -451,19 +459,12 @@ class AgentTool(Tool):
 
     async def execute(self, params: AgentParams, signal=None) -> dict:
         parent = self.ctx["agent"]
-        tool_names: list[str] | None = None
-        if params.tools is not None:
-            raw = params.tools
-            if isinstance(raw, str):
-                raw = json.loads(raw)
-            tool_names = [t for t in raw if isinstance(t, str)]
         overrides = {}
         if params.api is not None:
             overrides["api"] = params.api
         if params.system is not None:
             overrides["system"] = params.system
-        if tool_names is not None:
-            overrides["tool_names"] = tool_names
+        overrides["tool_names"] = params.tools
         child = parent.spawn(**overrides)
         if "_stream_log_fp" in parent.ctx:
             from .stream_log import StreamLogger

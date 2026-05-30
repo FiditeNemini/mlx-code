@@ -879,7 +879,7 @@ def generate_step(
         y, logprobs = (next_y, next_logprobs)
         if n <= _tl:
             _td.append(_yi)
-            if is_stuck(_td) or (n == _tl and _te not in _td):
+            if (is_stuck(_td) or n == _tl) and _te not in _td:
                 y = mx.array([_te])
                 _tl = -1
         n += 1
@@ -1505,8 +1505,19 @@ def serve(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Serve a local MLX model with an OpenAI-compatible API."
+    parser = argparse.ArgumentParser(description="mlx-code MAIN")
+    parser.add_argument(
+        "-p",
+        "--prompt",
+        default=None,
+        help="Initial prompt sent automatically when the REPL starts",
+    )
+    parser.add_argument(
+        "-r",
+        "--resume",
+        default=None,
+        metavar="COMMIT",
+        help="Resume a previous session from the given git commit hash",
     )
     parser.add_argument(
         "-m",
@@ -1566,17 +1577,6 @@ def main():
             "(?m)^<system-reminder>[\\s\\S]*?^</system-reminder>\\s*",
         ],
         help="Regex patterns stripped from model output before it is returned to the client",
-    )
-    parser.add_argument(
-        "--prompt",
-        default=None,
-        help="Initial prompt sent automatically when the REPL starts",
-    )
-    parser.add_argument(
-        "--resume",
-        default=None,
-        metavar="COMMIT",
-        help="Resume a previous session from the given git commit hash",
     )
     parser.add_argument("--stream", default=None, help="File to stream log into")
     args, leash_args = parser.parse_known_args()

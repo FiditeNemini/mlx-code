@@ -234,13 +234,13 @@ class Agent:
         return msg
 
 
-_REPL_HELP = "Commands:\n  /help          — show this message\n  /clear         — clear conversation history\n  /history       — print message history\n  /tools         — list active tools\n  /branch        — spawn a branched sub-agent and run a one-shot prompt\n  /abort         — signal abort after next tool call\n  exit / quit    — end the session\n"
+_REPL_HELP = "Commands:\n  /help          — show this message\n  /clear         — clear conversation history\n  /history       — print message history\n  /tools         — list active tools\n  /branch        — spawn a branched sub-agent and run a one-shot prompt\n  /abort         — signal abort after next tool call\n  /quit / exit    — end the session\n"
 import sys
 import os
 from contextlib import contextmanager
 
 
-def read_input(prompt: str = "\x1b[32m≫\x1b[0m ") -> str:
+def read_input(prompt: str = "\x1b[32m≫ \x1b[0m") -> str:
     if sys.platform == "win32":
         return _read_input_win(prompt)
     else:
@@ -416,7 +416,7 @@ def _read_input_win(prompt: str) -> str:
 
 
 async def repl(agent, init_prompt=None) -> None:
-    is_tty = sys.stdin.isatty()
+    is_tty = sys.stdin.isatty() and sys.stdout.isatty()
     loop = asyncio.get_running_loop()
     _suppress = False
     last_block = ""
@@ -467,9 +467,7 @@ async def repl(agent, init_prompt=None) -> None:
             elif et == "tool_start":
                 name_part = "\x1b[1;43;30;1m" + p["name"] + "\x1b[0m"
                 args_part = (
-                    " \x1b[2;33m" + json.dumps(p["args"]) + "\x1b[0m"
-                    if p["args"]
-                    else ""
+                    " \x1b[33m" + json.dumps(p["args"]) + "\x1b[0m" if p["args"] else ""
                 )
                 emit(name_part + args_part + "\n", "tool")
             elif et == "tool_end":
@@ -504,6 +502,8 @@ async def repl(agent, init_prompt=None) -> None:
         else:
             user_input = sys.stdin.read()
         if not user_input:
+            if not is_tty:
+                break
             continue
         last_block = ""
         logger.debug(user_input)
@@ -556,7 +556,7 @@ async def repl(agent, init_prompt=None) -> None:
                 print(f"Unknown command: {cmd}  (try /help)")
             continue
         if is_tty:
-            if user_input.lower() in {"exit", "quit"}:
+            if user_input.lower() in {"exit", "/quit"}:
                 print("Bye!")
                 break
             print("\x1b[34mπ\x1b[0m ", end="", flush=True)
@@ -683,6 +683,19 @@ def main():
     setup_logger(log_file=".log.json")
     parser = argparse.ArgumentParser(description="mlx-code REPL")
     parser.add_argument(
+        "-p",
+        "--prompt",
+        default=None,
+        help="Initial prompt sent automatically when the REPL starts",
+    )
+    parser.add_argument(
+        "-r",
+        "--resume",
+        default=None,
+        metavar="COMMIT",
+        help="Resume a previous session from the given git commit hash",
+    )
+    parser.add_argument(
         "-a",
         "--api",
         choices=["claude", "codex", "gemini", "deepseek", "noapi"],
@@ -720,17 +733,6 @@ def main():
         default=None,
         help="API key; falls back to the relevant *_API_KEY env var",
     )
-    parser.add_argument(
-        "--prompt",
-        default=None,
-        help="Initial prompt sent automatically when the REPL starts",
-    )
-    parser.add_argument(
-        "--resume",
-        default=None,
-        metavar="COMMIT",
-        help="Resume a previous session from the given git commit hash",
-    )
     parser.add_argument("--stream", default=None, help="File to stream log into")
     args = parser.parse_args()
     logger.debug(args)
@@ -743,7 +745,7 @@ def main():
         elif args.api == "gemini":
             api_key = os.environ.get("GEMINI_API_KEY") if api_key is None else api_key
             url = "https://generativelanguage.googleapis.com" if api_key else url
-            model = "gemini-3.1-flash-lite-preview" if model is None else model
+            model = "gemini-3.1-flash-lite" if model is None else model
         tool_names = [] if tool_names is None else tool_names
     run_repl(
         api=args.api,

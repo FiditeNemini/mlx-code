@@ -183,7 +183,7 @@ class KB:
 
 class DocThread:
     def __init__(self, kb: KB | None = None):
-        self.kb = KB("mcb.json") if kb is None else kb
+        self.kb = KB(db_path="mcb.json") if kb is None else kb
         self.submissions = []
 
     def submit(

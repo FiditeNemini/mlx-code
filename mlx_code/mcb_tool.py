@@ -38,9 +38,9 @@ class CommentKBTool(Tool):
         dt = self.ctx.get("dt")
         if dt is None:
             return tout("No knowledge base is available", True)
-        if params.to not in dt.kb:
-            return tout(f"Comment not found: {params.to}", True)
-        return tout(json.dumps({"id": dt.comment(params.content, to=params.to)}))
+        if params.parent not in dt.kb:
+            return tout(f"Comment not found: {params.parent}", True)
+        return tout(json.dumps({"id": dt.comment(params.content, to=params.parent)}))
 
 
 class SubmitKBParams(BaseModel):
@@ -70,4 +70,4 @@ def system_prompt(dt):
 
 
 ALL_TOOLS = [ReadKBTool, CommentKBTool, SubmitKBTool]
-ALL_NAMES = [i.name for i in ALL_TOOLS]
+ALL_NAMES = [i.name for i in ALL_TOOLS] + ["Agent"]
