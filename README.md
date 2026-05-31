@@ -2,7 +2,7 @@
 
 A lightweight coding agent built on Apple's MLX framework.
 
-[![demo](https://raw.githubusercontent.com/JosefAlbers/mlx-code/main/assets/mlx-code.gif)](https://youtu.be/0lkY7YQCyCo)
+https://github.com/user-attachments/assets/0569d101-8d0a-4e67-9e82-fce84a5ef3f0
 
 ---
 
