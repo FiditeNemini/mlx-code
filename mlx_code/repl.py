@@ -234,7 +234,7 @@ class Agent:
         return msg
 
 
-_REPL_HELP = "Commands:\n  /help          — show this message\n  /clear         — clear conversation history\n  /history       — print message history\n  /tools         — list active tools\n  /branch        — spawn a branched sub-agent and run a one-shot prompt\n  /abort         — signal abort after next tool call\n  /quit / exit    — end the session\n"
+_REPL_HELP = "Commands:\n  /help          — show this message\n  /clear         — clear conversation history\n  /history       — print message history\n  /tools         — list active tools\n  /branch        — spawn a branched sub-agent and run a one-shot prompt\n  /abort         — signal abort after next tool call\n  /export [path] — export session to a timestamped JSON file\n  /quit / exit    — end the session\n"
 import sys
 import os
 from contextlib import contextmanager
@@ -552,6 +552,24 @@ async def repl(agent, init_prompt=None) -> None:
             elif cmd == "/abort":
                 agent.abort()
                 print("[abort signalled]")
+            elif cmd == "/export":
+                import datetime
+
+                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                default_path = os.path.join(os.getcwd(), f"session_{ts}.json")
+                out_path = arg.strip() or default_path
+                payload = {
+                    "version": 1,
+                    "exported_at": ts,
+                    "system": agent.system,
+                    "messages": agent.messages,
+                }
+                try:
+                    with open(out_path, "w", encoding="utf-8") as f:
+                        json.dump(payload, f, indent=2, ensure_ascii=False)
+                    print(f"[exported {len(agent.messages)} messages → {out_path}]")
+                except OSError as e:
+                    print(f"[export failed: {e}]")
             else:
                 print(f"Unknown command: {cmd}  (try /help)")
             continue

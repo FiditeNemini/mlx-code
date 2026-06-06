@@ -861,7 +861,7 @@ def generate_step(
         y, logprobs = _step(input_tokens=prompt, input_embeddings=input_embeddings)
     mx.async_eval(y, logprobs)
     n = 0
-    _tl = int(max_tokens * 0.2)
+    _tl = int(max_tokens * 0.9)
     _td = []
     while True:
         if n != max_tokens:
@@ -1487,7 +1487,7 @@ def serve(
     fixed_port: bool = False,
     gwt=None,
 ) -> tuple[HTTPServer, str]:
-    handler = make_handler(model, os.path.abspath(cache), system, tools, skips, gwt)
+    handler = make_handler(model, cache, system, tools, skips, gwt)
     while True:
         try:
             server = HTTPServer((host, port), handler)
@@ -1523,6 +1523,9 @@ def main():
         "-m",
         "--model",
         default="mlx-community/Qwen3.5-4B-OptiQ-4bit",
+        # default="mlx-community/Qwen3.6-27B-OptiQ-4bit",
+        # default="mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit",
+
         help="MLX model path or HuggingFace repo ID (default: Qwen3.5-4B-OptiQ-4bit)",
     )
     parser.add_argument(
@@ -1581,6 +1584,7 @@ def main():
     parser.add_argument("--stream", default=None, help="File to stream log into")
     args, leash_args = parser.parse_known_args()
     logger.debug(f"args={args!r} leash_args={leash_args!r}")
+    cache = os.path.abspath(args.cache)
     with tempfile.TemporaryDirectory(dir="/tmp") as _home:
         env = os.environ.copy()
         home = Path(_home)
@@ -1597,7 +1601,7 @@ def main():
             host=args.host,
             port=args.port if args.port is not None else 8000,
             model=args.model,
-            cache=args.cache,
+            cache=cache,
             system=None if args.leash in ("none", "noapi") else args.system,
             tools=args.tools,
             skips=args.skips,
