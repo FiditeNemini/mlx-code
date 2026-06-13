@@ -256,14 +256,14 @@ def append_to_history_table(tbl: Table, messages: list[dict]) -> None:
             if render_as_md:
                 body = Markdown(text)
             else:
-                body = RichText(escape(text), style=style)
+                body = RichText(text, style=style)
             tbl.add_row(RichText(prefix, style=style), body)
 
 def render_history(messages: list[dict]) -> Table:
     tbl = _make_empty_history_table()
     append_to_history_table(tbl, messages)
     return tbl
-REPL_HELP = '\nCommands:\n/help               show this message\n/clear [--config F] clear conversation; --config reconfigures agent from YAML/JSON\n/history            show full conversation transcript\n/history --raw      show raw API message log (debug)\n/diff [--all]       show side-by-side diff of changes\n/errors             show timestamped error log for this tab\n/tools              list active tools\n/branch [--rev N] [--no-worktree] [prompt]\n                    open a branch tab; optional prompt runs immediately\n/abort              abort the running agent\n/export [path]      export session to JSON\n/exit  /quit        close branch tab, or exit the app\n!command            run shell command in worktree (output captured in TUI)\n!!command           run interactive shell command (TUI suspends, terminal handed to process)\n                    e.g.  !ls  !git diff  !cat file.py\n                          !!vim file.py  !!yazi  !!less log.txt\nKeys:\nEnter               submit\nCtrl-J              insert newline in editor\nAlt-1 … Alt-9       jump directly to tab N\nTab / Shift-Tab     cycle through tabs\nCtrl-C              abort running agent\nCtrl-D              close branch tab, or exit app\nCtrl-R              recall last prompt into editor\n'
+REPL_HELP = '\nCommands:\n/help               show this message\n/clear [--config F] clear conversation; --config reconfigures agent from YAML/JSON\n/history            show full conversation transcript\n/history --raw      show raw API message log (debug)\n/diff [--all]       show side-by-side diff of changes\n/errors             show timestamped error log for this tab\n/tools              list active tools\n/branch [--rev N] [--no-worktree] [prompt]\n                    open a branch tab; optional prompt runs immediately\n/abort              abort the running agent\n/export [path]      export session to JSON\n/exit /quit [--all] close branch tab, or exit the app\n!command            run shell command in worktree (output captured in TUI)\n$command            run interactive shell command (TUI suspends, terminal handed to process)\n                    e.g.  !ls  !git diff  !cat file.py\n                          $vim file.py  $yazi  $less log.txt\nKeys:\nEnter               submit\nCtrl-J              insert newline in editor\nCtrl-1 … Ctrl-9     jump directly to tab N\nCtrl-, / Ctrl-.     cycle through tabs\nCtrl-C              abort running agent\nCtrl-D              close branch tab (exit app if last tab) \nCtrl-R              recall last prompt into editor\n'
 
 class InputBox(TextArea):
     BINDINGS = [Binding('ctrl+j', 'insert_newline', 'New line', show=False), Binding('enter', 'submit_text', 'Submit', show=False, priority=True), Binding('ctrl+r', 'recall_last', 'Recall', show=False), Binding('ctrl+d', 'request_close', 'Exit', show=False, priority=True)]
@@ -486,7 +486,7 @@ class StatusBar(Static):
 class HelpBar(Static):
 
     def __init__(self, **kwargs):
-        self._idle_text = RichText('/help  !cmd  !!interactive  Ctrl-J newline  Alt-1…9 tabs  Ctrl-C abort  Ctrl-D exit', style='dim')
+        self._idle_text = RichText('/help  !cmd  $interactive  Ctrl-J newline  Ctrl-,. tabs  Ctrl-C abort  Ctrl-D exit', style='dim')
         super().__init__(self._idle_text, **kwargs)
 
     def show_idle(self) -> None:
@@ -506,7 +506,7 @@ class HelpBar(Static):
 
 class ReplApp(App[None]):
     CSS = '\n    ReplApp { layout: vertical; background: $background; }\n    ContentSwitcher { height: 1fr; }\n    InputBox {\n        height: auto;\n        min-height: 3;\n        max-height: 8;\n        border: none;\n        border-top: tall $panel-darken-1;\n        background: $panel;\n        padding: 0 2;\n        color: $text;\n    }\n    InputBox:focus { border-top: tall $accent; }\n    TabBar { height: 1; background: $panel; padding: 0 1; }\n    StatusBar { height: 1; background: $panel; color: $text-muted; padding: 0 1; }\n    HelpBar { height: 1; color: $text-muted; padding: 0 1; }\n    '
-    BINDINGS = [Binding('ctrl+c', 'abort_agent', 'Abort', priority=True, show=False), Binding('ctrl+d', 'close_or_exit', 'Exit', show=False), Binding('tab', 'next_tab', 'Next tab', show=False), Binding('shift+tab', 'prev_tab', 'Prev tab', show=False), Binding('ctrl+1', 'switch_tab(1)', 'Tab 1', show=False), Binding('ctrl+2', 'switch_tab(2)', 'Tab 2', show=False), Binding('ctrl+3', 'switch_tab(3)', 'Tab 3', show=False), Binding('ctrl+4', 'switch_tab(4)', 'Tab 4', show=False), Binding('ctrl+5', 'switch_tab(5)', 'Tab 5', show=False), Binding('ctrl+6', 'switch_tab(6)', 'Tab 6', show=False), Binding('ctrl+7', 'switch_tab(7)', 'Tab 7', show=False), Binding('ctrl+8', 'switch_tab(8)', 'Tab 8', show=False), Binding('ctrl+9', 'switch_tab(9)', 'Tab 9', show=False)]
+    BINDINGS = [Binding('ctrl+c', 'abort_agent', 'Abort', priority=True, show=False), Binding('ctrl+d', 'close_or_exit', 'Exit', show=False), Binding('ctrl+full_stop', 'next_tab', 'Next tab', show=False, priority=True), Binding('ctrl+comma', 'prev_tab', 'Prev tab', show=False, priority=True), Binding('ctrl+1', 'switch_tab(1)', 'Tab 1', show=False), Binding('ctrl+2', 'switch_tab(2)', 'Tab 2', show=False), Binding('ctrl+3', 'switch_tab(3)', 'Tab 3', show=False), Binding('ctrl+4', 'switch_tab(4)', 'Tab 4', show=False), Binding('ctrl+5', 'switch_tab(5)', 'Tab 5', show=False), Binding('ctrl+6', 'switch_tab(6)', 'Tab 6', show=False), Binding('ctrl+7', 'switch_tab(7)', 'Tab 7', show=False), Binding('ctrl+8', 'switch_tab(8)', 'Tab 8', show=False), Binding('ctrl+9', 'switch_tab(9)', 'Tab 9', show=False), Binding('ctrl+z', 'suspend_app', 'Suspend', show=False, priority=True)]
 
     def __init__(self, agent: Agent, init_prompt: str | None=None) -> None:
         super().__init__()
@@ -542,6 +542,11 @@ class ReplApp(App[None]):
             self.query_one('#statusbar', StatusBar).render_status(self.active_tab, self.active_tab.agent.model)
         except Exception:
             pass
+
+    def action_suspend_app(self) -> None:
+        import signal
+        with self.suspend():
+            os.kill(os.getpid(), signal.SIGTSTP)
 
     @property
     def active_tab(self) -> Tab:
@@ -579,8 +584,8 @@ class ReplApp(App[None]):
         tab.errors.clear()
         tab.last_error = ''
         self.query_one('#helpbar', HelpBar).show_idle()
-        if text.startswith('!!'):
-            command = text[2:].strip()
+        if text.startswith('$'):
+            command = text[1:].strip()
             if command:
                 await self._run_interactive_command(tab, command)
             return
@@ -592,9 +597,6 @@ class ReplApp(App[None]):
             return
         if text.startswith('/'):
             await self._handle_command(tab, text)
-            return
-        if text.lower() in {'exit', 'quit'}:
-            self._do_close_or_exit()
             return
         if tab.is_running:
             self.query_one('#helpbar', HelpBar).show_error('Agent is running — /abort first.')
@@ -644,11 +646,11 @@ class ReplApp(App[None]):
         env = tab.agent.ctx.get('env')
 
         def _blocking_run() -> int:
-            return subprocess.run(command, shell=True, cwd=cwd, env=env if env else None).returncode
+            return subprocess.run(command, shell=True, cwd=cwd, env={**os.environ, **env}).returncode
         with self.suspend():
             loop = asyncio.get_running_loop()
             returncode = await loop.run_in_executor(None, _blocking_run)
-        tab.show_command(f'!!{command}', f'[exited {returncode}]')
+        tab.show_command(f'${command}', f'[exited {returncode}]')
 
     async def _handle_command(self, tab: Tab, text: str) -> None:
         cmd, _, arg = text.partition(' ')
@@ -708,7 +710,7 @@ class ReplApp(App[None]):
                         content = m.get('content', '')
                         if isinstance(content, list):
                             content = ' '.join((b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text'))
-                        content = re.sub('\\s+', '  ', content).strip()
+                        content = re.sub('\\s+', ' ', content).strip()
                         if len(content) > 100:
                             content = content[:100] + '…'
                         line = f'{i}. {content}'
@@ -874,11 +876,19 @@ class ReplApp(App[None]):
             except OSError as exc:
                 self.query_one('#helpbar', HelpBar).show_error(f'Export failed: {exc}')
         elif cmd in {'/exit', '/quit'}:
-            self._exit_with_summary(tab)
+            if arg == '--all':
+                self._exit_with_summary(tab)
+            else:
+                self._do_close_or_exit()
         else:
             self.query_one('#helpbar', HelpBar).show_error(f'Unknown command: {cmd!r}  — try /help')
 
     def _exit_with_summary(self, exit_tab: Tab) -> None:
+        for t in self.tabs:
+            if t.is_running:
+                t.agent.abort()
+                if t.running_task:
+                    t.running_task.cancel()
         summary = []
         for t in self.tabs:
             gwt = t.agent.ctx.get('gwt')
@@ -939,7 +949,18 @@ class ReplApp(App[None]):
             if tab.running_task:
                 tab.running_task.cancel()
         self._confirm_close = False
-        self._exit_with_summary(tab)
+        if len(self.tabs) > 1:
+            key = id(tab.agent)
+            if key in self._unsubscribers:
+                self._unsubscribers[key]()
+                del self._unsubscribers[key]
+            tab.remove()
+            self.tabs.pop(self.active_index)
+            if self.active_index >= len(self.tabs):
+                self.active_index = len(self.tabs) - 1
+            self._switch_to(self.active_index)
+        else:
+            self._exit_with_summary(tab)
 
     def action_abort_agent(self) -> None:
         input_box = self.query_one(InputBox)
@@ -1047,6 +1068,16 @@ def run_repl(*, base_url=None, model=None, api: Literal['claude', 'codex', 'gemi
         finally:
             if log_fp:
                 log_fp.close()
+            if app_instance:
+                cleaned = set()
+                for t in app_instance.tabs:
+                    gwt = t.agent.ctx.get('gwt')
+                    if gwt and getattr(gwt, 'worktree', None) and (gwt.worktree not in cleaned):
+                        cleaned.add(gwt.worktree)
+                        try:
+                            cleanup_worktree(gwt)
+                        except Exception:
+                            pass
             if app_instance and hasattr(app_instance, '_exit_summary') and app_instance._exit_summary:
                 print('\n--- Session Exit Summary ---')
                 for item in app_instance._exit_summary:

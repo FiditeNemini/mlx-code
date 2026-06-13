@@ -405,9 +405,9 @@ agent = Agent(extra_tool_classes=[LiveDBTool], tool_names=["QueryDB"])
 | `/branch [--rev N] [prompt]` | Open a new branch tab from the current (or earlier) checkpoint |
 | `/abort` | Abort the running agent |
 | `/export [path]` | Export session to JSON |
-| `/exit` or `/quit` | Close branch tab, or exit the app |
+| `/exit [--all]` | Close branch tab, or exit the app |
 | `!command` | Run a shell command; output captured in the TUI |
-| `!!command` | Run an interactive command (TUI suspends, terminal handed to process) |
+| `$command` | Run an interactive command (TUI suspends, terminal handed to process) |
 
 ### Key bindings
 
@@ -415,8 +415,8 @@ agent = Agent(extra_tool_classes=[LiveDBTool], tool_names=["QueryDB"])
 |---|---|
 | `Enter` | Submit |
 | `Ctrl-J` | Insert newline |
-| `Alt-1` … `Alt-9` | Jump to tab N |
-| `Tab` / `Shift-Tab` | Cycle through tabs |
+| `Ctrl-1` … `Ctrl-9` | Jump to tab N |
+| `Ctrl-,` / `Ctrl-.` | Cycle through tabs |
 | `Ctrl-C` | Abort running agent |
 | `Ctrl-D` | Close branch tab, or exit app |
 | `Ctrl-R` | Recall last prompt into editor |
