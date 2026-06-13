@@ -852,7 +852,7 @@ def make_handler(model_name, cache_dir, system, names, skips, gwt=None, parse_th
                     abort_ev.clear()
                     prompt, ckpts = encode(body, api, tokenizer, system, names, skips)
                     if ckpts is not None:
-                        gwt_cell[0] = commit_worktree(gwt_cell[0])
+                        gwt_cell[0], _ = commit_worktree(gwt_cell[0])
                     seg_gen = generate(model, tokenizer, prompt=prompt, ckpts=ckpts, pc=pc, max_tokens=body.get('max_tokens', 8192))
                     msg_id = f'msg_{uuid.uuid4().hex}'
                     self.send_response(200)
@@ -903,6 +903,7 @@ def main():
     parser.add_argument('--port', type=int, default=None, help='Port to listen on; auto-increments if already in use (default: 8000)')
     parser.add_argument('--skips', nargs='+', default=['(?m)^\\[SUGGESTION MODE[\\s\\S]*', '(?m)^<system-reminder>[\\s\\S]*?^</system-reminder>\\s*'], help='Regex patterns stripped from model output before it is returned to the client')
     parser.add_argument('--stream', default=None, help='File to stream log into')
+    parser.add_argument('--notui', action='store_true', help='Use simple terminal REPL instead of TUI')
     args, leash_args = parser.parse_known_args()
     logger.debug(f'args={args!r} leash_args={leash_args!r}')
     cache = os.path.abspath(args.cache)
@@ -925,7 +926,7 @@ def main():
             threading.Thread(target=server.serve_forever, daemon=True).start()
             if args.leash == 'noapi':
                 from .repl import run_repl
-                run_repl(base_url=url, api=args.leash, repo=cwd, env=env, system=args.system, tool_names=args.tools, sdir=args.skill, init_prompt=args.prompt, resume=args.resume, stream=args.stream)
+                run_repl(base_url=url, api=args.leash, repo=cwd, env=env, system=args.system, tool_names=args.tools, sdir=args.skill, init_prompt=args.prompt, resume=args.resume, stream=args.stream, notui=args.notui)
             else:
                 env['GOOGLE_GEMINI_BASE_URL'] = url
                 env['GEMINI_API_KEY'] = 'mc'

@@ -19,8 +19,11 @@ def _git(cwd: str, *args: str, check: bool=True) -> str:
         r = subprocess.run(['git', *args], cwd=cwd, capture_output=True, text=True, check=check)
         return r.stdout.strip()
     except subprocess.CalledProcessError as exc:
-        raise GitError(f'git {' '.join(args)!r} failed in {cwd!r}: {exc.stderr.strip()}') from exc
+        args_str = repr(' '.join(args))
+        raise GitError(f'git {args_str} failed in {cwd!r}: {exc.stderr.strip()}') from exc
     except FileNotFoundError as exc:
+        if not os.path.exists(cwd):
+            raise GitError(f'git working directory does not exist: {cwd!r}') from exc
         raise GitError('git executable not found in PATH') from exc
 
 def _make_commit_message(messages) -> str:
@@ -28,18 +31,32 @@ def _make_commit_message(messages) -> str:
         return messages
     filtered = [m for m in messages if m.get('role') != 'commit']
     last_user = next((m['content'] for m in reversed(filtered) if m.get('role') == 'user'), None)
-    title = last_user.replace('\n', ' ').strip()[:30] if isinstance(last_user, str) else ''
-    return f'{title}\n\n{json.dumps(filtered, indent=2, ensure_ascii=False)}'
+    title = last_user.replace('\n', ' ').strip()[:60] if isinstance(last_user, str) else 'update'
+    body = json.dumps(filtered, indent=2, ensure_ascii=False)
+    return f'{title}\n\n--- BEGIN MESSAGES ---\n{body}'
 
 def _parse_messages_from_commit(raw: str) -> list[dict]:
     if not raw or raw in ('snapshot', 'update'):
         return []
-    try:
+    marker = '--- BEGIN MESSAGES ---\n'
+    idx = raw.find(marker)
+    if idx != -1:
+        payload = raw[idx + len(marker):]
+    else:
         parts = raw.split('\n\n', 1)
-        msgs = json.loads(parts[1] if len(parts) == 2 else parts[0])
+        payload = parts[1] if len(parts) == 2 else parts[0]
+    try:
+        msgs = json.loads(payload)
         return msgs if isinstance(msgs, list) else []
-    except (json.JSONDecodeError, IndexError):
+    except json.JSONDecodeError:
+        logger.warning('_parse_messages_from_commit: could not parse JSON from commit body')
         return []
+
+def _count_user_turns(commit_body: str) -> int:
+    messages = _parse_messages_from_commit(commit_body)
+    if messages:
+        return sum((1 for m in messages if m.get('role') == 'user'))
+    return 0
 
 def git_add_filtered(cwd: str) -> None:
     excludes = [f':(exclude){p}' for p in _ADD_EXCLUDES]
@@ -117,22 +134,41 @@ def commit_worktree(point: LedgerPoint | None, message: str='update') -> tuple[L
         return (None, '')
 
 def cleanup_worktree(point: LedgerPoint, *, remove_branch: bool=False) -> None:
-    root = _git(point.worktree, 'rev-parse', '--show-toplevel', check=False) or None
-    if root:
-        try:
-            _git(root, 'worktree', 'remove', '--force', point.worktree)
-        except Exception as e:
-            logger.warning('git worktree remove failed: %s', e)
+    root: str | None = None
     if os.path.exists(point.worktree):
+        git_common = _git(point.worktree, 'rev-parse', '--git-common-dir', check=False).strip()
+        if git_common and os.path.isdir(git_common):
+            root = str(Path(git_common).parent.resolve())
+        if not root:
+            root = _git(point.worktree, 'rev-parse', '--show-toplevel', check=False) or None
+        if root:
+            try:
+                _git(root, 'worktree', 'remove', '--force', point.worktree)
+            except Exception as e:
+                logger.warning('git worktree remove failed: %s', e)
         try:
             shutil.rmtree(point.worktree, ignore_errors=True)
         except Exception as e:
             logger.warning('Filesystem cleanup failed for %s: %s', point.worktree, e)
-    if remove_branch and root:
+    else:
+        logger.warning('cleanup_worktree: worktree path %r no longer exists; skipping removal', point.worktree)
         try:
-            _git(root, 'branch', '-D', point.branch)
+            root = _git(os.path.dirname(point.worktree), 'rev-parse', '--show-toplevel', check=False) or None
+        except Exception:
+            pass
+    if root:
+        try:
+            _git(root, 'worktree', 'prune')
         except Exception as e:
-            logger.warning('git branch deletion failed: %s', e)
+            logger.warning('git worktree prune failed: %s', e)
+    if remove_branch:
+        if root:
+            try:
+                _git(root, 'branch', '-D', point.branch)
+            except Exception as e:
+                logger.warning('git branch deletion failed for %r: %s', point.branch, e)
+        else:
+            logger.warning('cleanup_worktree: could not locate repo root; branch %r was NOT deleted', point.branch)
 
 def resume_worktree(repo_dir: str, commit: str, *, worktree_dir: str | None=None, prefix: str='resume') -> tuple[LedgerPoint | None, list[dict]]:
     try:
@@ -208,7 +244,7 @@ def get_commit_history_with_stats(worktree: str, limit: int=50) -> list[dict]:
             if line.startswith('COMMIT:'):
                 if current_commit:
                     body_text = '\n'.join(body_lines)
-                    current_commit['user_turns'] = body_text.count('"role": "user"')
+                    current_commit['user_turns'] = _count_user_turns(body_text)
                     commits.append(current_commit)
                 current_commit = {'sha': line[7:], 'short_sha': '', 'refs': '', 'subject': '', 'files': []}
                 in_body = False
@@ -237,16 +273,17 @@ def get_commit_history_with_stats(worktree: str, limit: int=50) -> list[dict]:
                         current_commit['files'].append(line)
         if current_commit:
             body_text = '\n'.join(body_lines)
-            current_commit['user_turns'] = body_text.count('"role": "user"')
+            current_commit['user_turns'] = _count_user_turns(body_text)
             commits.append(current_commit)
         return commits
     except Exception as e:
         logger.warning(f'get_commit_history_with_stats failed: {e}')
         return []
 
-def find_rev_commit(worktree: str, n: int) -> str | None:
+def find_rev_commit(worktree: str, n: int, *, limit: int=0) -> str | None:
+    limit_args = ['-n', str(limit)] if limit > 0 else []
     try:
-        result = subprocess.run(['git', 'log', '--format=COMMIT:%H%n%b%nEND_BODY', '-n', '500'], cwd=worktree, capture_output=True, text=True, check=True)
+        result = subprocess.run(['git', 'log', '--format=COMMIT:%H%n%b%nEND_BODY', *limit_args], cwd=worktree, capture_output=True, text=True, check=True)
         output = result.stdout
         best_exact: str | None = None
         best_below: str | None = None
@@ -256,7 +293,7 @@ def find_rev_commit(worktree: str, n: int) -> str | None:
             if line.startswith('COMMIT:'):
                 if current_sha is not None:
                     body = '\n'.join(body_lines)
-                    count = body.count('"role": "user"')
+                    count = _count_user_turns(body)
                     if count == n and best_exact is None:
                         best_exact = current_sha
                     if count < n and best_below is None:
@@ -269,7 +306,7 @@ def find_rev_commit(worktree: str, n: int) -> str | None:
                 body_lines.append(line)
         if current_sha is not None:
             body = '\n'.join(body_lines)
-            count = body.count('"role": "user"')
+            count = _count_user_turns(body)
             if count == n and best_exact is None:
                 best_exact = current_sha
             if count < n and best_below is None:

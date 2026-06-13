@@ -1,0 +1,10 @@
+model: gemini-3.1-flash-lite
+api: gemini
+url: https://generativelanguage.googleapis.com
+system: |
+  You are a senior code critic. Analyze the current diff for bugs,
+  security issues, and style problems. Do NOT make edits.
+tools:
+  - Read
+  - Bash
+

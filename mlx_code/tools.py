@@ -213,7 +213,7 @@ class BashTool(Tool):
     parameters = BashParams
 
     async def execute(self, params: BashParams, signal=None) -> dict:
-        proc_env = {**os.environ, **self.ctx.get('env', {})}
+        proc_env = self.ctx.get('env')
         proc = await asyncio.create_subprocess_shell(params.command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=self.ctx['cwd'], env=proc_env)
         communicate_task = asyncio.create_task(proc.communicate())
         abort_task: asyncio.Task | None = None

@@ -27,6 +27,21 @@ from rich.text import Text as RichText
 from rich.table import Table
 from rich.markup import escape
 from rich.markdown import Markdown
+from rich.cells import cell_len
+from rich.syntax import Syntax
+
+def load_agent_config(path: str) -> dict:
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.abspath(path)
+    with open(path, 'r') as f:
+        if path.endswith(('.yaml', '.yml')):
+            try:
+                import yaml
+            except ImportError:
+                raise ValueError('PyYAML required for YAML configs: pip install pyyaml')
+            return yaml.safe_load(f) or {}
+        return json.load(f)
 
 class Agent:
 
@@ -51,7 +66,7 @@ class Agent:
         self.tools = tools
 
     def spawn(self, **overrides) -> 'Agent':
-        kwargs = {'api': self.api, 'system': self.system, 'extra_tool_classes': self._extra_tool_classes, 'model': self.model, 'api_key': self.api_key, 'base_url': self.base_url, 'ctx': {k: v for k, v in self.ctx.items() if k != 'agent'}}
+        kwargs = {'system': self.system, 'extra_tool_classes': self._extra_tool_classes, 'model': self.model, 'api_key': self.api_key, 'base_url': self.base_url, 'ctx': {k: v for k, v in self.ctx.items() if k != 'agent'}}
         kwargs.update(overrides)
         return Agent(**kwargs)
 
@@ -63,6 +78,8 @@ class Agent:
     async def run(self, prompt: str) -> dict:
         await self._wait()
         self._signal = None
+        self._last_result_sig = None
+        self._same_result_count = 0
         self.messages.append({'role': 'user', 'content': prompt})
         return await self._loop()
 
@@ -119,7 +136,7 @@ class Agent:
             if not calls:
                 break
             results = await self._execute_tools(calls)
-            result_sig = json.dumps([(r['tool_name'], r['content']) for r in results], sort_keys=True)
+            result_sig = json.dumps([(r['tool_name'], r['tool_args'], r['content']) for r in results], sort_keys=True)
             if result_sig == self._last_result_sig:
                 self._same_result_count += 1
             else:
@@ -160,7 +177,7 @@ class Agent:
                 result = await tool.execute(validate_tool_call(tool, call), self._signal)
             except Exception as exc:
                 result = {'content': [{'type': 'text', 'text': str(exc)}], 'is_error': True}
-        msg = {'role': 'toolResult', 'tool_call_id': call['id'], 'tool_name': call['name'], 'content': result['content'], 'is_error': result['is_error']}
+        msg = {'role': 'toolResult', 'tool_call_id': call['id'], 'tool_name': call['name'], 'tool_args': call['arguments'], 'content': result['content'], 'is_error': result['is_error']}
         await self._emit({'type': 'tool_result', 'payload': {'message': msg}})
         await self._emit({'type': 'tool_end', 'payload': {'name': call['name'], 'is_error': result['is_error'], 'result': msg}})
         return msg
@@ -175,90 +192,18 @@ def _branch_index_title(parent_path: tuple[int, ...], existing_tabs: list) -> tu
 def _clean_block_text(text: str) -> str:
     return text.lstrip('\n').rstrip()
 
-def _render_commit_diff(text: str) -> RichText:
-    rt = RichText()
-    lines = text.split('\n')
-    for i, line in enumerate(lines):
-        if not line.strip():
-            continue
-        if line.lstrip().startswith('[') and ']' in line:
-            rt.append(line, style='bold cyan')
-        elif 'files changed' in line or 'file changed' in line:
-            rt.append(line, style='dim')
-        elif '|' in line:
-            pipe_idx = line.index('|')
-            rt.append(line[:pipe_idx + 1])
-            for ch in line[pipe_idx + 1:]:
-                if ch == '+':
-                    rt.append(ch, style='green')
-                elif ch == '-':
-                    rt.append(ch, style='red')
-                else:
-                    rt.append(ch, style='dim')
-        else:
-            rt.append(line, style='dim')
-        if i < len(lines) - 1:
-            rt.append('\n')
-    return rt
-
-def _render_split_diff(diff_text: str, ref1_label: str='HEAD~1', ref2_label: str='HEAD') -> Table:
-    tbl = Table(show_header=True, box=None, expand=True, padding=0, show_lines=False, pad_edge=False)
-    tbl.add_column(f' ◇ {ref1_label} ', style='red', ratio=1, width=1)
-    tbl.add_column(f' ◇ {ref2_label} ', style='green', ratio=1, width=1)
-
-    def _flush(left, right):
-        maxlen = max(len(left), len(right))
-        left += [''] * (maxlen - len(left))
-        right += [''] * (maxlen - len(right))
-        for l, r in zip(left, right):
-            l_style = 'bold red' if l.startswith('-') else 'dim' if l else ''
-            r_style = 'bold green' if r.startswith('+') else 'dim' if r else ''
-            tbl.add_row(RichText(escape(l), style=l_style), RichText(escape(r), style=r_style))
-        left.clear()
-        right.clear()
-    left_lines = []
-    right_lines = []
-    in_hunk = False
-    for line in diff_text.split('\n'):
-        if line.startswith('diff --git'):
-            _flush(left_lines, right_lines)
-            in_hunk = False
-            match = re.search('b/(.*)', line)
-            fname = match.group(1) if match else line
-            tbl.add_row(RichText(f'--- a/{fname}', style='bold cyan'), RichText(f'+++ b/{fname}', style='bold cyan'))
-        elif line.startswith('@@'):
-            _flush(left_lines, right_lines)
-            in_hunk = True
-            tbl.add_row(RichText(escape(line), style='bold yellow'), RichText(escape(line), style='bold yellow'))
-        elif not in_hunk:
-            if line.startswith('---') or line.startswith('+++'):
-                continue
-            _flush(left_lines, right_lines)
-            if line.strip():
-                tbl.add_row(RichText(escape(line), style='dim cyan'), RichText('', style='dim'))
-        elif line.startswith('-'):
-            left_lines.append(line)
-        elif line.startswith('+'):
-            right_lines.append(line)
-        elif line.startswith(' '):
-            _flush(left_lines, right_lines)
-            tbl.add_row(RichText(escape(line), style='dim'), RichText(escape(line), style='dim'))
-        else:
-            _flush(left_lines, right_lines)
-            if line.strip():
-                tbl.add_row(RichText(escape(line), style='dim'), RichText(escape(line), style='dim'))
-    _flush(left_lines, right_lines)
-    return tbl
-
-def render_history(messages: list[dict]) -> Table:
+def _make_empty_history_table() -> Table:
     tbl = Table(show_header=False, show_lines=False, box=None, pad_edge=False, expand=True, padding=0)
     tbl.add_column(width=2)
     tbl.add_column(ratio=1)
+    return tbl
+
+def append_to_history_table(tbl: Table, messages: list[dict]) -> None:
     for msg in messages:
         role = msg.get('role')
         content = msg.get('content')
         is_error = msg.get('is_error', False)
-        if isinstance(content, (Table, RichText)):
+        if isinstance(content, (Table, RichText, Syntax)):
             blocks = [{'type': 'renderable', 'renderable': content}]
         elif isinstance(content, str):
             blocks = [{'type': 'text', 'text': content}]
@@ -285,7 +230,6 @@ def render_history(messages: list[dict]) -> Table:
                 prefix, style = ('◌', 'dim italic')
             elif role == 'toolResult':
                 prefix, style = ('→', 'dim yellow')
-                render_as_md = True
             elif b_type == 'toolCall':
                 prefix, style = ('⚙', 'yellow')
                 args = block.get('arguments', {})
@@ -305,7 +249,7 @@ def render_history(messages: list[dict]) -> Table:
             if not text:
                 continue
             if role == 'commit':
-                body = _render_commit_diff(text)
+                body = Syntax(text, lexer='diff', theme='monokai')
                 tbl.add_row(RichText('◇', style='cyan'), body)
                 continue
             if render_as_md:
@@ -313,8 +257,12 @@ def render_history(messages: list[dict]) -> Table:
             else:
                 body = RichText(escape(text), style=style)
             tbl.add_row(RichText(prefix, style=style), body)
+
+def render_history(messages: list[dict]) -> Table:
+    tbl = _make_empty_history_table()
+    append_to_history_table(tbl, messages)
     return tbl
-REPL_HELP = '\nCommands:\n/help               show this message\n/clear              clear conversation (transcript + agent memory)\n/history            show full conversation transcript\n/history --raw      show raw API message log (debug)\n/diff [--all]       show side-by-side diff of changes\n/errors             show timestamped error log for this tab\n/tools              list active tools\n/branch [--rev N] [--as-worktree] [prompt]\n                    open a branch tab; optional prompt runs immediately\n/abort              abort the running agent\n/export [path]      export session to JSON\n/exit  /quit        close branch tab, or exit the app\n!command            run shell command in worktree (output captured in TUI)\n!!command           run interactive shell command (TUI suspends, terminal handed to process)\n                    e.g.  !ls  !git diff  !cat file.py\n                          !!vim file.py  !!yazi  !!less log.txt\nKeys:\nEnter               submit\nCtrl-J              insert newline in editor\nAlt-1 … Alt-9       jump directly to tab N\nTab / Shift-Tab     cycle through tabs\nCtrl-C              abort running agent\nCtrl-D              close branch tab, or exit app\nCtrl-R              recall last prompt into editor\n'
+REPL_HELP = '\nCommands:\n/help               show this message\n/clear [--config F] clear conversation; --config reconfigures agent from YAML/JSON\n/history            show full conversation transcript\n/history --raw      show raw API message log (debug)\n/diff [--all]       show side-by-side diff of changes\n/errors             show timestamped error log for this tab\n/tools              list active tools\n/branch [--rev N] [--no-worktree] [prompt]\n                    open a branch tab; optional prompt runs immediately\n/abort              abort the running agent\n/export [path]      export session to JSON\n/exit  /quit        close branch tab, or exit the app\n!command            run shell command in worktree (output captured in TUI)\n!!command           run interactive shell command (TUI suspends, terminal handed to process)\n                    e.g.  !ls  !git diff  !cat file.py\n                          !!vim file.py  !!yazi  !!less log.txt\nKeys:\nEnter               submit\nCtrl-J              insert newline in editor\nAlt-1 … Alt-9       jump directly to tab N\nTab / Shift-Tab     cycle through tabs\nCtrl-C              abort running agent\nCtrl-D              close branch tab, or exit app\nCtrl-R              recall last prompt into editor\n'
 
 class InputBox(TextArea):
     BINDINGS = [Binding('ctrl+j', 'insert_newline', 'New line', show=False), Binding('enter', 'submit_text', 'Submit', show=False, priority=True), Binding('ctrl+r', 'recall_last', 'Recall', show=False), Binding('ctrl+d', 'request_close', 'Exit', show=False, priority=True)]
@@ -368,6 +316,7 @@ class Tab(Vertical):
         self._stream_blocks: list[dict] = []
         self._command_blocks: list[dict] = []
         self._cache_count: int = -1
+        self._rendered_cache: Table | None = None
 
     @property
     def is_running(self) -> bool:
@@ -408,8 +357,7 @@ class Tab(Vertical):
                     self._stream_blocks.append({'type': 'thinking', 'text': delta})
             self.refresh_stream()
         elif et == 'tool_start':
-            name = payload.get('name', 'tool')
-            self._stream_blocks.append({'type': 'toolCall', 'name': name, 'arguments': '…', 'id': 'streaming'})
+            self._stream_blocks.append({'type': 'toolCall', 'name': payload.get('name', 'tool'), 'arguments': payload.get('args', {}), 'id': 'streaming'})
             self.refresh_stream()
         elif et == 'tool_end':
             if payload.get('is_error'):
@@ -439,12 +387,19 @@ class Tab(Vertical):
             self.status = 'idle'
 
     def refresh_cache(self) -> None:
-        if len(self.agent.messages) != self._cache_count:
-            self._cache_count = len(self.agent.messages)
-            self.query_one('#cache', Static).update(render_history(self.agent.messages))
-            scroll = self.query_one('#scroll', VerticalScroll)
-            if scroll.max_scroll_y - scroll.scroll_y < 3:
-                self.app.call_after_refresh(scroll.scroll_end, animate=False)
+        new_count = len(self.agent.messages)
+        if new_count == self._cache_count:
+            return
+        if self._rendered_cache is None or new_count < self._cache_count:
+            self._rendered_cache = render_history(self.agent.messages)
+        else:
+            new_msgs = self.agent.messages[self._cache_count:]
+            append_to_history_table(self._rendered_cache, new_msgs)
+        self._cache_count = new_count
+        self.query_one('#cache', Static).update(self._rendered_cache)
+        scroll = self.query_one('#scroll', VerticalScroll)
+        if scroll.max_scroll_y - scroll.scroll_y < 3:
+            self.app.call_after_refresh(scroll.scroll_end, animate=False)
 
     def refresh_stream(self) -> None:
         msgs = []
@@ -468,6 +423,7 @@ class Tab(Vertical):
         self.query_one('#cache', Static).update('')
         self.query_one('#stream', Static).update('')
         self._cache_count = 0
+        self._rendered_cache = None
         self._command_blocks = []
         self._stream_blocks = []
 
@@ -490,8 +446,9 @@ class TabBar(Static):
         for i, tab in enumerate(tabs):
             marker = '●' if tab.is_running else ' '
             label = f' {marker}{i + 1}:{tab.title} '
-            self._ranges.append((x, x + len(label), i))
-            x += len(label)
+            width = cell_len(label)
+            self._ranges.append((x, x + width, i))
+            x += width
             if i == active_index:
                 t.append(label, style='bold green reverse')
             elif tab.is_running:
@@ -621,6 +578,11 @@ class ReplApp(App[None]):
         tab.errors.clear()
         tab.last_error = ''
         self.query_one('#helpbar', HelpBar).show_idle()
+        if text.startswith('!!'):
+            command = text[2:].strip()
+            if command:
+                await self._run_interactive_command(tab, command)
+            return
         if text.startswith('!'):
             command = text[1:].strip()
             if not command:
@@ -662,14 +624,27 @@ class ReplApp(App[None]):
         cwd = gwt.worktree if gwt and getattr(gwt, 'worktree', None) else tab.agent.ctx.get('cwd') or os.getcwd()
         env = tab.agent.ctx.get('env')
         try:
-            proc = await asyncio.create_subprocess_shell(command, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env if env else None)
-            stdout, _ = await proc.communicate()
-            output = stdout.decode(errors='replace').rstrip('\n')
+            proc = await asyncio.create_subprocess_shell(command, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env if env else None)
+            stdout, stderr = await proc.communicate()
+            out = stdout.decode(errors='replace').rstrip('\n')
+            err = stderr.decode(errors='replace').rstrip('\n')
+            body = out
+            if err:
+                body = (body + '\n' if body else '') + f'[stderr]\n{err}'
             if proc.returncode and proc.returncode != 0:
-                output += f'\n[exit {proc.returncode}]'
-            tab.show_command(f'!{command}', output or '(no output)')
+                body += f'\n[exit {proc.returncode}]'
+            tab.show_command(f'!{command}', body or '(no output)')
         except Exception as e:
             tab.show_command(f'!{command}', f'Error: {e}')
+
+    async def _run_interactive_command(self, tab: Tab, command: str) -> None:
+        gwt = tab.agent.ctx.get('gwt')
+        cwd = gwt.worktree if gwt and getattr(gwt, 'worktree', None) else tab.agent.ctx.get('cwd') or os.getcwd()
+        env = tab.agent.ctx.get('env')
+        with self.suspend():
+            proc = await asyncio.create_subprocess_shell(command, cwd=cwd, stdin=None, stdout=None, stderr=None, env=env if env else None)
+            returncode = await proc.wait()
+        tab.show_command(f'!!{command}', f'[exited {returncode}]')
 
     async def _handle_command(self, tab: Tab, text: str) -> None:
         cmd, _, arg = text.partition(' ')
@@ -678,9 +653,29 @@ class ReplApp(App[None]):
         if cmd == '/help':
             tab.show_command(text, REPL_HELP)
         elif cmd == '/clear':
-            tab.agent.messages.clear()
-            tab.clear_log()
-            self._refresh_chrome()
+            cfg_match = re.match('--config\\s+(.+)', arg)
+            if cfg_match:
+                config_path = cfg_match.group(1).strip().strip('"').strip("'")
+                try:
+                    cfg = load_agent_config(config_path)
+                except Exception as e:
+                    self.query_one('#helpbar', HelpBar).show_error(f'Config error: {e}')
+                    return
+                old = tab.agent
+                new_ctx = {k: v for k, v in old.ctx.items() if k != 'agent'}
+                new_agent = Agent(system=cfg.get('system'), api=cfg.get('api'), model=cfg.get('model'), api_key=cfg.get('api_key'), base_url=cfg.get('base_url'), tool_names=cfg.get('tools'), extra_tool_classes=old._extra_tool_classes, ctx=new_ctx)
+                old_key = id(old)
+                if old_key in self._unsubscribers:
+                    self._unsubscribers[old_key]()
+                    del self._unsubscribers[old_key]
+                tab.agent = new_agent
+                self._attach_agent(tab)
+                tab.clear_log()
+                self._refresh_chrome()
+            else:
+                tab.agent.messages.clear()
+                tab.clear_log()
+                self._refresh_chrome()
         elif cmd == '/history':
             if arg == '--raw':
                 raw_json = json.dumps(tab.agent.messages, indent=2, default=str)
@@ -764,7 +759,7 @@ class ReplApp(App[None]):
             if not diff_text.strip():
                 tab.show_command(text, f'No differences between {ref1_label} and {ref2_label}.')
                 return
-            renderable = _render_split_diff(diff_text, ref1_label, ref2_label)
+            renderable = Syntax(diff_text, lexer='diff', theme='monokai')
             tab._command_blocks.extend([{'role': 'user', 'content': text}, {'role': 'command', 'content': renderable}])
             tab.refresh_stream()
         elif cmd == '/errors':
@@ -791,9 +786,9 @@ class ReplApp(App[None]):
             as_worktree = False
             rev_n: int | None = None
             prompt = arg
-            if '--as-worktree' in prompt:
-                as_worktree = True
-                prompt = prompt.replace('--as-worktree', '').strip()
+            if '--no-worktree' in prompt:
+                as_worktree = False
+                prompt = prompt.replace('--no-worktree', '').strip()
             rev_match = re.search('--rev\\s+(\\d+)', prompt)
             if rev_match:
                 rev_n = int(rev_match.group(1))
@@ -854,9 +849,18 @@ class ReplApp(App[None]):
             self._switch_to(len(self.tabs) - 1)
             if prompt:
                 await self._run_submit(prompt)
+        elif cmd == '/tab':
+            if arg and arg.isdigit():
+                self.action_switch_tab(int(arg))
+            else:
+                self.query_one('#helpbar', HelpBar).show_error('Usage: /tab <n>')
         elif cmd == '/export':
             ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            path = arg or os.path.join(os.getcwd(), f'session_{ts}.json')
+            user_cwd = tab.agent.ctx.get('user_cwd', os.getcwd())
+            if arg:
+                path = arg if os.path.isabs(arg) else os.path.join(user_cwd, arg)
+            else:
+                path = os.path.join(user_cwd, f'session_{ts}.json')
             data = {'version': 1, 'exported_at': ts, 'system': tab.agent.system, 'messages': tab.agent.messages}
             try:
                 with open(path, 'w', encoding='utf-8') as f:
@@ -934,6 +938,11 @@ class ReplApp(App[None]):
         self._exit_with_summary(tab)
 
     def action_abort_agent(self) -> None:
+        input_box = self.query_one(InputBox)
+        if input_box.text:
+            input_box.load_text('')
+            input_box.focus()
+            return
         tab = self.active_tab
         if tab.is_running:
             tab.agent.abort()
@@ -946,8 +955,13 @@ async def _stream_to_stdout(agent: Agent, user_input: str) -> None:
     if text:
         print(text)
 
-async def repl(agent, init_prompt=None) -> ReplApp:
+async def repl(agent, init_prompt=None, notui=False):
     is_tty = sys.stdin.isatty() and sys.stdout.isatty()
+    if notui and is_tty:
+        from .ntui import SimpleRepl
+        sr = SimpleRepl(agent, init_prompt=init_prompt)
+        await sr.run()
+        return None
     if not is_tty:
         user_input = (init_prompt if init_prompt is not None else sys.stdin.read()).strip()
         if user_input:
@@ -981,14 +995,14 @@ def collect_skills(skills_dir, skills=None):
                 skills.append({'name': name, 'description': description, 'content': text})
     skill_prompt = 'Available skills (use Skill to load full instructions when needed):\n' + '\n'.join((f'- {s['name']}: {s['description']}' for s in skills)) if skills else ''
     return (skills, skill_prompt)
+_AGENT_ENV_ALLOWLIST: re.Pattern = re.compile('\n    ^(\n    # ── Execution paths ────────────────────────────────────────────────────\n    PATH\n    | MANPATH | INFOPATH\n\n    # ── Python / conda / virtualenv ────────────────────────────────────────\n    | CONDA_PREFIX | CONDA_DEFAULT_ENV | CONDA_EXE | CONDA_PYTHON_EXE\n    | CONDA_SHLVL | CONDA_PROMPT_MODIFIER\n    | MAMBA_ROOT_PREFIX | MAMBA_EXE\n    | VIRTUAL_ENV | VIRTUAL_ENV_PROMPT\n    | PYTHONPATH | PYTHONHOME | PYTHONSTARTUP\n    | PYTHONDONTWRITEBYTECODE | PYTHONUNBUFFERED\n    | PYTHONFAULTHANDLER | PYTHONUTF8\n    | PIP_INDEX_URL | PIP_EXTRA_INDEX_URL   # private PyPI mirrors (no auth tokens)\n    | PIPENV_PIPFILE | POETRY_VIRTUALENVS_IN_PROJECT\n\n    # ── Native / compiled libs ─────────────────────────────────────────────\n    | LD_LIBRARY_PATH | LD_PRELOAD\n    | DYLD_LIBRARY_PATH | DYLD_FALLBACK_LIBRARY_PATH   # macOS\n    | PKG_CONFIG_PATH\n    | CMAKE_PREFIX_PATH | CMAKE_BUILD_TYPE\n\n    # ── CUDA / GPU ─────────────────────────────────────────────────────────\n    | CUDA_HOME | CUDA_PATH | CUDA_VISIBLE_DEVICES\n    | NVIDIA_VISIBLE_DEVICES | NVIDIA_DRIVER_CAPABILITIES\n    | HIP_PATH | ROCR_VISIBLE_DEVICES           # AMD\n    | METAL_DEVICE_WRAPPER_TYPE                 # Apple\n\n    # ── Locale / encoding ──────────────────────────────────────────────────\n    | LANG | LANGUAGE | LC_ALL | LC_CTYPE | LC_MESSAGES\n    | LC_NUMERIC | LC_TIME | LC_COLLATE\n    | PYTHONUTF8\n\n    # ── Terminal (needed by tools that check if output is a tty) ───────────\n    | TERM | TERM_PROGRAM | COLORTERM\n    | NO_COLOR | CLICOLOR | CLICOLOR_FORCE\n    | COLUMNS | LINES\n\n    # ── Process identity (non-secret) ──────────────────────────────────────\n    | HOME          # overridden to temp dir by run_repl — safe\n    | SHELL\n    | TMPDIR | TEMP | TMP\n    | XDG_RUNTIME_DIR | XDG_CACHE_HOME | XDG_CONFIG_HOME | XDG_DATA_HOME\n\n    # ── Toolchain / build (no secrets) ─────────────────────────────────────\n    | CC | CXX | AR | LD | FC\n    | CFLAGS | CXXFLAGS | LDFLAGS | MAKEFLAGS\n    | JAVA_HOME | GRADLE_HOME | MAVEN_HOME\n    | GOPATH | GOROOT | GOMODCACHE\n    | CARGO_HOME | RUSTUP_HOME\n    | NODE_PATH                                 # not NODE_AUTH_TOKEN\n    | GEM_HOME | GEM_PATH | BUNDLE_PATH\n    )$\n', re.VERBOSE)
 
-def run_repl(*, base_url=None, model=None, api: Literal['claude', 'codex', 'gemini', 'deepseek', 'noapi']='noapi', system='', sdir=None, skills=None, env=None, tool_names=None, extra_tool_classes=None, api_key=None, gwt=None, ctx=None, init_prompt=None, resume_messages=None, repo=None, resume=None, stream=None, verbose_transcript=False):
+def _make_agent_env(base: dict[str, str]) -> dict[str, str]:
+    return {k: v for k, v in base.items() if _AGENT_ENV_ALLOWLIST.match(k)}
+
+def run_repl(*, base_url=None, model=None, api: Literal['claude', 'codex', 'gemini', 'deepseek', 'noapi']='noapi', system='', sdir=None, skills=None, env=None, tool_names=None, extra_tool_classes=None, api_key=None, gwt=None, ctx=None, init_prompt=None, resume_messages=None, repo=None, resume=None, stream=None, verbose_transcript=False, notui=False):
     repo = os.path.abspath(repo or os.getcwd())
     with tempfile.TemporaryDirectory(dir=tempfile.gettempdir()) as _home:
-        if env is None:
-            env = os.environ.copy()
-        env['HOME'] = _home
-        env.setdefault('SHELL', '/bin/bash')
         if gwt is None:
             if resume:
                 result = resume_worktree(repo, resume, worktree_dir=os.path.join(_home, 'workspace'))
@@ -1000,15 +1014,17 @@ def run_repl(*, base_url=None, model=None, api: Literal['claude', 'codex', 'gemi
             else:
                 gwt = create_worktree(repo, worktree_dir=os.path.join(_home, 'workspace'))
         cwd = gwt.worktree if gwt else repo
-        env['PWD'] = cwd
-        _orig_cwd = os.getcwd()
-        _orig_environ = os.environ.copy()
-        os.environ.update(env)
-        os.chdir(cwd)
+        if env is None:
+            env = os.environ.copy()
+        env.setdefault('SHELL', '/bin/bash')
+        agent_env = _make_agent_env(env)
+        agent_env['HOME'] = _home
+        agent_env['PWD'] = cwd
+        user_cwd = os.path.abspath(os.getcwd())
         sdir = os.path.abspath(sdir or cwd)
         skills, skill_prompt = collect_skills(sdir, skills)
         system = '\n\n'.join(filter(None, [system, skill_prompt]))
-        merged_ctx = {'cwd': cwd, 'skills': skills, 'gwt': gwt, 'env': env, **(ctx or {})}
+        merged_ctx = {'cwd': cwd, 'user_cwd': user_cwd, 'skills': skills, 'gwt': gwt, 'env': agent_env, **(ctx or {})}
         agent = Agent(system=system, api=api, model=model, tool_names=tool_names, extra_tool_classes=extra_tool_classes, api_key=api_key, base_url=base_url, ctx=merged_ctx)
         log_fp = None
         if stream is not None:
@@ -1023,16 +1039,10 @@ def run_repl(*, base_url=None, model=None, api: Literal['claude', 'codex', 'gemi
             print(f'[resumed {len(resume_messages)} messages from checkpoint]')
         app_instance = None
         try:
-            app_instance = asyncio.run(repl(agent, init_prompt=init_prompt))
+            app_instance = asyncio.run(repl(agent, init_prompt=init_prompt, notui=notui))
         finally:
             if log_fp:
                 log_fp.close()
-            try:
-                os.chdir(_orig_cwd)
-            except OSError as exc:
-                logger.warning('Could not restore original cwd %r: %s', _orig_cwd, exc)
-            os.environ.clear()
-            os.environ.update(_orig_environ)
             if app_instance and hasattr(app_instance, '_exit_summary') and app_instance._exit_summary:
                 print('\n--- Session Exit Summary ---')
                 for item in app_instance._exit_summary:
@@ -1058,6 +1068,7 @@ def main():
     parser.add_argument('--key', default=None, help='API key')
     parser.add_argument('--stream', default=None, help='File to stream log into')
     parser.add_argument('--verbose-transcript', action='store_true', help='Reserved; not yet implemented')
+    parser.add_argument('--notui', action='store_true', help='Use simple terminal REPL instead of TUI')
     args = parser.parse_args()
     logger.debug(args)
     url, model, tool_names, api_key = (args.url, args.model, args.tools, args.key)
@@ -1071,6 +1082,6 @@ def main():
         url = 'https://generativelanguage.googleapis.com' if api_key else url
         model = 'gemini-3.1-flash-lite' if model is None else model
         tool_names = [] if tool_names is None else tool_names
-    run_repl(api=args.api, system=args.system, repo=args.cwd, model=model, base_url=url, tool_names=tool_names, sdir=args.skill, api_key=api_key, init_prompt=args.prompt, resume=args.resume, stream=args.stream)
+    run_repl(api=args.api, system=args.system, repo=args.cwd, model=model, base_url=url, tool_names=tool_names, sdir=args.skill, api_key=api_key, init_prompt=args.prompt, resume=args.resume, stream=args.stream, notui=args.notui)
 if __name__ == '__main__':
     main()
