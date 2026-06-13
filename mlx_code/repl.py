@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import subprocess
 import copy
 import datetime
 import json
@@ -641,9 +642,12 @@ class ReplApp(App[None]):
         gwt = tab.agent.ctx.get('gwt')
         cwd = gwt.worktree if gwt and getattr(gwt, 'worktree', None) else tab.agent.ctx.get('cwd') or os.getcwd()
         env = tab.agent.ctx.get('env')
+
+        def _blocking_run() -> int:
+            return subprocess.run(command, shell=True, cwd=cwd, env=env if env else None).returncode
         with self.suspend():
-            proc = await asyncio.create_subprocess_shell(command, cwd=cwd, stdin=None, stdout=None, stderr=None, env=env if env else None)
-            returncode = await proc.wait()
+            loop = asyncio.get_running_loop()
+            returncode = await loop.run_in_executor(None, _blocking_run)
         tab.show_command(f'!!{command}', f'[exited {returncode}]')
 
     async def _handle_command(self, tab: Tab, text: str) -> None:

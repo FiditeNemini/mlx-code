@@ -2,7 +2,7 @@
 
 A Git-native coding agent that can run entirely on your Mac. No API keys, no cloud, and no data leaving your machine. Powered by Apple MLX, it turns commits, branches, and worktrees into the agent’s state, history, and execution model
 
-https://github.com/user-attachments/assets/0569d101-8d0a-4e67-9e82-fce84a5ef3f0
+[![Link](https://raw.githubusercontent.com/JosefAlbers/mlx-code/main/assets/mlx-code-v0.0.20.gif)](https://youtu.be/0lkY7YQCyCo)
 
 ---
 
@@ -69,8 +69,6 @@ mlc-run --api deepseek --model deepseek-v4-flash
 ```
 
 That's it. The first run starts a local inference server and drops you into the REPL.
-
-[![Link](https://raw.githubusercontent.com/JosefAlbers/mlx-code/main/assets/mlx-code-v0.0.20.gif)](https://youtu.be/0lkY7YQCyCo)
 
 ---
 
@@ -275,7 +273,6 @@ echo "explain lsp.py" | mlc-run -a deepseek | cat - PLAN.md | mlc-run --url http
 # Simple terminal REPL (no TUI)
 mlc-run --notui
 ```
-
 
 ---
 
