@@ -68,20 +68,6 @@ result = await agent.run('refactor utils.py to use dataclasses')
 
 ---
 
-## Why mlx-code
-
-**Agents as reusable workflow atoms.** Tabs, branches, and tasks are all managed within instances of `Agent`. Each one gets its own conversation, its own tools, and its own worktree. Agents can spawn sub-agents to delegate subtasks, and each child is a full agent with its own scoped tool set.
-
-**Git is the database.** When the agent makes file changes, they’re committed to a git worktree with the full conversation embedded in the commit message. Resume any past session by hash, branch from any checkpoint, and inspect the agent timeline with `git log`. No proprietary state files, just Git. 
-
-**Built-in safety nets.** Your working directory is never at risk. The agent operates inside a `git worktree`, not your checkout. It can make a mess, and you can inspect or discard it without ever touching `main`. Subprocess environment variables go through an explicit allowlist, so secrets in your shell are never leaked to agent-spawned processes.
-
-**Batteries included.** Everything ships in one pip install: the MLX inference engine, the multi-protocol API server, the agent loop, the tools, and the TUI. No llama.cpp, no ollama, no vLLM bridge to find and configure. And the server natively speaks OpenAI, Anthropic, Gemini, and Codex wire formats simultaneously, so `claude`, `codex`, and `gemini` CLIs can all work against your local model without a translation layer.
-
-**Continuous batching.** The local inference server runs a continuous batching engine that processes multiple sequences concurrently. When you spawn parallel agents (eg, multiple tabs, `asyncio.gather` pipelines, or delegated sub-tasks) they all share the same GPU context and are stepped together each tick. A prefix cache persists KV snapshots to disk, so repeated system prompts and conversation prefixes are prefilled once and reused across sessions. No request queueing, no waiting for the previous agent to finish.
-
----
-
 ## Quick start
 
 ```bash
@@ -97,6 +83,20 @@ mlc-run --api gemini             # or use a remote provider
 ```
 
 That's it. The first run starts a local inference server and drops you into the REPL.
+
+---
+
+## Why mlx-code
+
+**Agents as reusable workflow atoms.** Tabs, branches, and tasks are all managed within instances of `Agent`. Each one gets its own conversation, its own tools, and its own worktree. Agents can spawn sub-agents to delegate subtasks, and each child is a full agent with its own scoped tool set.
+
+**Git is the database.** When the agent makes file changes, they’re committed to a git worktree with the full conversation embedded in the commit message. Resume any past session by hash, branch from any checkpoint, and inspect the agent timeline with `git log`. No proprietary state files, just Git. 
+
+**Built-in safety nets.** Your working directory is never at risk. The agent operates inside a `git worktree`, not your checkout. It can make a mess, and you can inspect or discard it without ever touching `main`. Subprocess environment variables go through an explicit allowlist, so secrets in your shell are never leaked to agent-spawned processes.
+
+**Batteries included.** Everything ships in one pip install: the MLX inference engine, the multi-protocol API server, the agent loop, the tools, and the TUI. No llama.cpp, no ollama, no vLLM bridge to find and configure. And the server natively speaks OpenAI, Anthropic, Gemini, and Codex wire formats simultaneously, so `claude`, `codex`, and `gemini` CLIs can all work against your local model without a translation layer.
+
+**Continuous batching.** The local inference server runs a continuous batching engine that processes multiple sequences concurrently. When you spawn parallel agents (eg, multiple tabs, `asyncio.gather` pipelines, or delegated sub-tasks) they all share the same GPU context and are stepped together each tick. A prefix cache persists KV snapshots to disk, so repeated system prompts and conversation prefixes are prefilled once and reused across sessions. No request queueing, no waiting for the previous agent to finish.
 
 ---
 
