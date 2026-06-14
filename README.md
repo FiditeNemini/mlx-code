@@ -59,24 +59,6 @@ result = await agent.run('refactor utils.py to use dataclasses')
 
 ---
 
-## Quick start
-
-```bash
-# ephemeral run (no installation)
-uvx --from mlx-code mlc
-
-# or install into the current environment
-pip install mlx-code
-
-# launch
-mlc                              # with a local MLX model
-mlc-run --api gemini             # or use a remote provider
-```
-
-That's it. The first run starts a local inference server and drops you into the REPL.
-
----
-
 ## Core ideas
 
 - **Git is the state machine.** Every file-changing agent step is committed with the conversation that produced it, so you can inspect, resume, and branch from any checkpoint.
@@ -97,6 +79,24 @@ That's it. The first run starts a local inference server and drops you into the 
 **Batteries included.** Everything ships in one pip install: the MLX inference engine, the multi-protocol API server, the agent loop, the tools, and the TUI. No llama.cpp, no ollama, no vLLM bridge to find and configure. And the server natively speaks OpenAI, Anthropic, Gemini, and Codex wire formats simultaneously, so `claude`, `codex`, and `gemini` CLIs can all work against your local model without a translation layer.
 
 **Continuous batching.** The local inference server runs a continuous batching engine that processes multiple sequences concurrently. When you spawn parallel agents (eg, multiple tabs, `asyncio.gather` pipelines, or delegated sub-tasks) they all share the same GPU context and are stepped together each tick. A prefix cache persists KV snapshots to disk, so repeated system prompts and conversation prefixes are prefilled once and reused across sessions. No request queueing, no waiting for the previous agent to finish.
+
+---
+
+## Quick start
+
+```bash
+# ephemeral run (no installation)
+uvx --from mlx-code mlc
+
+# or install into the current environment
+pip install mlx-code
+
+# launch
+mlc                              # with a local MLX model
+mlc-run --api gemini             # or use a remote provider
+```
+
+That's it. The first run starts a local inference server and drops you into the REPL.
 
 ---
 
