@@ -944,6 +944,8 @@ def main():
     parser.add_argument('--skips', nargs='+', default=['(?m)^\\[SUGGESTION MODE[\\s\\S]*', '(?m)^<system-reminder>[\\s\\S]*?^</system-reminder>\\s*'], help='Regex patterns stripped from model output before it is returned to the client')
     parser.add_argument('--stream', default=None, help='File to stream log into')
     parser.add_argument('--bare', action='store_true', help='Use simple terminal REPL instead of TUI')
+    parser.add_argument('--web', action='store_true', help='Use web UI instead of TUI')
+    parser.add_argument('--web-port', type=int, default=None, help='Port for web UI (default: inference port + 80)')
     args, leash_args = parser.parse_known_args()
     logger.debug(f'args={args!r} leash_args={leash_args!r}')
     if args.engine == 'batch' and args.leash not in ('none', 'noapi'):
@@ -979,8 +981,13 @@ def main():
             if args.engine == 'cache':
                 threading.Thread(target=server.serve_forever, daemon=True).start()
             if args.leash == 'noapi':
-                from .repl import run_repl
-                run_repl(base_url=url, api=args.leash, repo=cwd, env=env, system=args.system, tool_names=args.tools, sdir=args.skill, init_prompt=args.prompt, resume=args.resume, stream=args.stream, bare=args.bare)
+                if args.web:
+                    from .web import run_web
+                    web_port = args.web_port if args.web_port is not None else port + 80
+                    run_web(base_url=url, api=args.leash, repo=cwd, env=env, system=args.system, tool_names=args.tools, sdir=args.skill, init_prompt=args.prompt, resume=args.resume, stream=args.stream, host=args.host, port=web_port)
+                else:
+                    from .repl import run_repl
+                    run_repl(base_url=url, api=args.leash, repo=cwd, env=env, system=args.system, tool_names=args.tools, sdir=args.skill, init_prompt=args.prompt, resume=args.resume, stream=args.stream, bare=args.bare)
             else:
                 env['GOOGLE_GEMINI_BASE_URL'] = url
                 env['GEMINI_API_KEY'] = 'mc'

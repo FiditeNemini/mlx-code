@@ -2,7 +2,7 @@
 
 A Git-native coding agent that can run entirely on your Mac. No API keys, no cloud, and no data leaving your machine. Powered by Apple MLX, it turns commits, branches, and worktrees into the agent’s state, history, and execution model
 
-<a href="https://asciinema.org/a/1257590" target="_blank"><img src="https://asciinema.org/a/1257590.svg" /></a>
+[![v0.0.27](https://github.com/user-attachments/assets/8a1c131a-dda1-4b52-9fa6-9c0fbccb5ea6)](https://youtube.com/shorts/1LuifKFKixc)
 
 ---
 
@@ -11,7 +11,7 @@ A Git-native coding agent that can run entirely on your Mac. No API keys, no clo
 ```
 Worktrees:
 
-  main ──●──●──●──●──●──●──●──●──●──●──●──●──●──●───────────► Node = git commit + chat history
+  main ──●──●──●──●──●──●──●──●──●──●──●──●──●──●───────────► Node = git commit + chat hx
             │        │
             │        └── branch-1 ──●──●──●
             │                          │ ┌────────────┐
@@ -19,16 +19,14 @@ Worktrees:
             │                            └─────┬──────┘
             └── branch-0 ──●──●──●             │
                                                │
-                                               │
 Tabs:                                          ├────────────► Tab = git branch + Agent
                                                │
-                                               │
-┌──────────────────────────────────────────────┼─────────┐
+┌──────────────────────────────────────────────│─────────┐
 │  TUI tabs                                    │         │
 │  ┌──────┐  ┌──────────┐  ┌──────────┐  ┌─────┴──────┐  │
 │  │ main │  │ branch-0 │  │ branch-1 │  │ branch-1-0 │  │
 │  └──────┘  └────┬─────┘  └──────────┘  └────────────┘  │
-└─────────────────┼──────────────────────────────────────┘
+└─────────────────│──────────────────────────────────────┘
                   │
 Agents:           ├─────────────────────────────────────────► Each tab runs its own Agent
                   │
@@ -484,10 +482,10 @@ All file tools enforce path sandboxing. The agent cannot read or write outside t
 
 | Backend | Flag | Notes |
 |---------|------|-------|
-| MLX (local) | `--api noapi` | Default. Runs on-device, no API key needed |
+| MLX-LM (local) | `--api noapi` | Default. Runs on-device, no API key needed |
 | Claude | `--api claude` | Requires `ANTHROPIC_API_KEY` |
 | Gemini | `--api gemini` | Requires `GOOGLE_API_KEY` |
-| DeepSeek | `--api deepseek` | DeepSeek API or compatible endpoint |
+| DeepSeek | `--api deepseek` | Requires `DEEPSEEK_API_KEY` |
 | Codex | `--api codex` | OpenAI Codex CLI integration |
 | OpenAI | `--api openai` | Any OpenAI-compatible endpoint |
 
@@ -496,10 +494,25 @@ All file tools enforce path sandboxing. The agent cannot read or write outside t
 The local MLX server speaks OpenAI, Anthropic, and Gemini wire formats simultaneously, so you can use any compatible CLI as the frontend:
 
 ```bash
-mlc --leash claude       # claude CLI routes through local model
-mlc --leash codex        # codex CLI routes through local model
-mlc --leash gemini       # gemini CLI routes through local model
-mlc --leash none         # server only
+mlc                      # default
+mlc --web                # web UI (api.mlx-code.com)
+mlc --bare               # no TUI
+mlc --leash none         # no harness
+mlc --leash codex        # codex CLI
+mlc --leash gemini       # gemini CLI
+mlc --leash claude       # claude code
+```
+
+#### WebUI
+
+```bash
+[protect & connect]-[networking]-[tunnels]-[add route]-[add published application]:
+    - subdomain: jjoe
+    - domain: mlx-code.com
+    - service url: http://host.containers.internal:8080
+mlc --host 0.0.0.0 --engine batch --web &
+podman run cloudflare/cloudflared:latest tunnel --no-autoupdate run --token $JJ_CFD_TOKEN
+phone http://jjoe.mlx-code.com
 ```
 
 ---
