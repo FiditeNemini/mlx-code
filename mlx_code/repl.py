@@ -742,9 +742,9 @@ _AGENT_ENV_ALLOWLIST: re.Pattern = re.compile('\n    ^(\n    PATH\n    | MANPATH
 def _make_agent_env(base: dict[str, str]) -> dict[str, str]:
     return {k: v for k, v in base.items() if _AGENT_ENV_ALLOWLIST.match(k)}
 
-async def repl(engine: CommandEngine, init_prompt=None, bare=False):
+async def repl(engine: CommandEngine, init_prompt=None, ui_mode='tui'):
     is_tty = sys.stdin.isatty() and sys.stdout.isatty()
-    if bare and is_tty:
+    if ui_mode == 'bare' and is_tty:
         from .bare import BareRepl
         r = BareRepl(engine, init_prompt=init_prompt)
         await r.run()
@@ -754,12 +754,23 @@ async def repl(engine: CommandEngine, init_prompt=None, bare=False):
         if user_input:
             await _stream_to_stdout(engine.active_tab.agent, user_input)
         return None
-    from .tui import ReplApp
-    app = ReplApp(engine, init_prompt=init_prompt)
-    await app.run_async()
-    return app
+    if ui_mode == 'tui':
+        try:
+            from .tui import ReplApp
+        except ImportError:
+            print()
+            print('[warning] textual/rich not installed → falling back to bare.')
+            print('          Install TUI deps with:\x1b[31m pip install mlx-code[all] \x1b[0m')
+            from .bare import BareRepl
+            r = BareRepl(engine, init_prompt=init_prompt)
+            await r.run()
+            return None
+        app = ReplApp(engine, init_prompt=init_prompt)
+        await app.run_async()
+        return app
+    return None
 
-def run_repl(*, base_url=None, model=None, api: Literal['claude', 'codex', 'gemini', 'deepseek', 'noapi']='noapi', system='', sdir=None, skills=None, env=None, tool_names=None, extra_tool_classes=None, api_key=None, gwt=None, ctx=None, init_prompt=None, resume_messages=None, repo=None, resume=None, stream=None, bare=False):
+def run_repl(*, base_url=None, model=None, api='noapi', system='', sdir=None, skills=None, env=None, tool_names=None, extra_tool_classes=None, api_key=None, gwt=None, ctx=None, init_prompt=None, resume_messages=None, repo=None, resume=None, stream=None, ui_mode='tui', web_host='127.0.0.1', web_port=8080):
     repo = os.path.abspath(repo or os.getcwd())
     with tempfile.TemporaryDirectory(dir=tempfile.gettempdir()) as _home:
         if gwt is None:
@@ -785,9 +796,6 @@ def run_repl(*, base_url=None, model=None, api: Literal['claude', 'codex', 'gemi
         system = '\n\n'.join(filter(None, [system, skill_prompt]))
         merged_ctx = {'cwd': cwd, 'user_cwd': user_cwd, 'skills': skills, 'gwt': gwt, 'env': agent_env, **(ctx or {})}
         agent = Agent(system=system, api=api, model=model, tool_names=tool_names, extra_tool_classes=extra_tool_classes, api_key=api_key, base_url=base_url, ctx=merged_ctx)
-        engine = CommandEngine()
-        main_tab = TabModel(agent, title='main', is_main=True)
-        engine.tabs = [main_tab]
         log_fp = None
         if stream is not None:
             from .stream_log import StreamLogger
@@ -800,26 +808,35 @@ def run_repl(*, base_url=None, model=None, api: Literal['claude', 'codex', 'gemi
             agent.messages = list(resume_messages)
             print(f'[resumed {len(resume_messages)} messages from checkpoint]')
         try:
-            asyncio.run(repl(engine, init_prompt=init_prompt, bare=bare))
+            if ui_mode == 'web':
+                try:
+                    from .web import run_web
+                except ImportError:
+                    print('[warning] starlette/uvicorn not installed — falling back to bare.\n         Install web deps with:  pip install mlx-code[all]')
+                    engine = CommandEngine()
+                    main_tab = TabModel(agent, title='main', is_main=True)
+                    engine.tabs = [main_tab]
+                    asyncio.run(repl(engine, init_prompt=init_prompt, ui_mode='bare'))
+                else:
+                    run_web(agent=agent, init_prompt=init_prompt, web_host=web_host, web_port=web_port)
+            else:
+                engine = CommandEngine()
+                main_tab = TabModel(agent, title='main', is_main=True)
+                engine.tabs = [main_tab]
+                asyncio.run(repl(engine, init_prompt=init_prompt, ui_mode=ui_mode))
         finally:
             if log_fp:
                 log_fp.close()
-            cleaned: set[str] = set()
-            for tab in engine.tabs:
-                gwt_ref = tab.agent.ctx.get('gwt')
-                if gwt_ref and getattr(gwt_ref, 'worktree', None) and (gwt_ref.worktree not in cleaned):
-                    cleaned.add(gwt_ref.worktree)
-                    try:
-                        cleanup_worktree(gwt_ref)
-                    except Exception:
-                        pass
-            if engine.exit_summary:
-                print('\n--- Session Exit Summary ---')
-                for item in engine.exit_summary:
-                    title = item['title']
-                    branch = item['branch'] or '(no branch)'
-                    marker = ' * <-- exit origin' if item['is_exit_tab'] else ''
-                    print(f'  {title} ({branch}){marker}')
+            if 'engine' in locals() and hasattr(engine, 'tabs'):
+                cleaned: set[str] = set()
+                for tab in engine.tabs:
+                    gwt_ref = tab.agent.ctx.get('gwt')
+                    if gwt_ref and getattr(gwt_ref, 'worktree', None) and (gwt_ref.worktree not in cleaned):
+                        cleaned.add(gwt_ref.worktree)
+                        try:
+                            cleanup_worktree(gwt_ref)
+                        except Exception:
+                            pass
 
 def main():
     import argparse

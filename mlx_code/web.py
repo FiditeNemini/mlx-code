@@ -409,77 +409,40 @@ async def close_tab(request: Request):
     await web_repl._close_tab(tab_id)
     return JSONResponse({'ok': True, 'active_id': web_repl.active_id})
 
-def run_web(*, base_url=None, model=None, api: Literal['claude', 'codex', 'gemini', 'deepseek', 'noapi']='noapi', system='', sdir=None, skills=None, env=None, tool_names=None, extra_tool_classes=None, api_key=None, gwt=None, ctx=None, init_prompt=None, resume_messages=None, repo=None, resume=None, stream=None, host='127.0.0.1', port=8080):
-    repo = os.path.abspath(repo or os.getcwd())
-    with tempfile.TemporaryDirectory(dir=tempfile.gettempdir()) as _home:
-        if gwt is None:
-            if resume:
-                result = resume_worktree(repo, resume, worktree_dir=os.path.join(_home, 'workspace'))
-                if result is None or result[0] is None:
-                    print(f'[error] Could not resume from commit {resume!r}. Aborting.')
-                    return
-                gwt, resume_messages = result
-                print(f'[resumed worktree at {gwt.worktree} from commit {resume}]')
-            else:
-                gwt = create_worktree(repo, worktree_dir=os.path.join(_home, 'workspace'))
-        cwd = gwt.worktree if gwt else repo
-        if env is None:
-            env = os.environ.copy()
-        env.setdefault('SHELL', '/bin/bash')
-        agent_env = _make_agent_env(env)
-        agent_env['HOME'] = _home
-        agent_env['PWD'] = cwd
-        user_cwd = os.path.abspath(os.getcwd())
-        sdir = os.path.abspath(sdir or cwd)
-        skills, skill_prompt = collect_skills(sdir, skills)
-        system = '\n\n'.join(filter(None, [system, skill_prompt]))
-        merged_ctx = {'cwd': cwd, 'user_cwd': user_cwd, 'skills': skills, 'gwt': gwt, 'env': agent_env, **(ctx or {})}
-        agent = Agent(system=system, api=api, model=model, tool_names=tool_names, extra_tool_classes=extra_tool_classes, api_key=api_key, base_url=base_url, ctx=merged_ctx)
-        log_fp = None
-        if stream is not None:
-            from .stream_log import StreamLogger
-            log_fp = open(stream, 'w', buffering=1)
-            agent.ctx['_stream_log_fp'] = log_fp
-            agent.ctx['_stream_log_depth'] = 0
-            StreamLogger(agent, log_fp, depth=0, name='base')
-            print(f'[streaming log: tail -f {stream}]')
-        if resume_messages:
-            agent.messages = list(resume_messages)
-            print(f'[resumed {len(resume_messages)} messages from checkpoint]')
-        web_repl = WebRepl(agent, init_prompt=init_prompt)
+def run_web(*, agent: Agent, init_prompt: str | None=None, web_host='127.0.0.1', web_port=8080):
+    web_repl = WebRepl(agent, init_prompt=init_prompt)
 
-        @asynccontextmanager
-        async def lifespan(app):
-            if init_prompt:
-                asyncio.create_task(web_repl.run_prompt(0, init_prompt))
-            yield
-            for t in web_repl.tabs:
-                if t.is_running:
-                    t.agent.abort()
-                    if t.running_task:
-                        t.running_task.cancel()
-        app = Starlette(routes=[Route('/', homepage, methods=['GET']), Route('/events', event_stream, methods=['GET']), Route('/send', send_message, methods=['POST']), Route('/switch_tab', switch_tab, methods=['POST']), Route('/branch', branch, methods=['POST']), Route('/abort', abort_handler, methods=['POST']), Route('/history/{tab_id}', history, methods=['GET']), Route('/close_tab', close_tab, methods=['POST'])], lifespan=lifespan)
-        app.state.web_repl = web_repl
-        print(f'[web UI: http://{host}:{port}]')
-        config = uvicorn.Config(app, host=host, port=port, log_level='warning')
-        server = uvicorn.Server(config)
-        server_thread = threading.Thread(target=server.run, daemon=True)
-        server_thread.start()
-        try:
-            while server_thread.is_alive():
-                server_thread.join(0.1)
-        except KeyboardInterrupt:
-            print('\nShutting down server...')
-        finally:
-            if log_fp:
-                log_fp.close()
-            cleaned = set()
-            for t in web_repl.tabs:
-                gwt = t.agent.ctx.get('gwt')
-                if gwt and hasattr(gwt, 'worktree') and (gwt.worktree not in cleaned):
-                    cleaned.add(gwt.worktree)
-                    try:
-                        cleanup_worktree(gwt)
-                    except Exception:
-                        pass
-            os._exit(0)
+    @asynccontextmanager
+    async def lifespan(app):
+        if init_prompt:
+            asyncio.create_task(web_repl.run_prompt(0, init_prompt))
+        yield
+        for t in web_repl.tabs:
+            if t.is_running:
+                t.agent.abort()
+                if t.running_task:
+                    t.running_task.cancel()
+    app = Starlette(routes=[Route('/', homepage, methods=['GET']), Route('/events', event_stream, methods=['GET']), Route('/send', send_message, methods=['POST']), Route('/switch_tab', switch_tab, methods=['POST']), Route('/branch', branch, methods=['POST']), Route('/abort', abort_handler, methods=['POST']), Route('/history/{tab_id}', history, methods=['GET']), Route('/close_tab', close_tab, methods=['POST'])], lifespan=lifespan)
+    app.state.web_repl = web_repl
+    print(f'[web UI: http://{web_host}:{web_port}]')
+    config = uvicorn.Config(app, host=web_host, port=web_port, log_level='warning')
+    server = uvicorn.Server(config)
+    server_thread = threading.Thread(target=server.run, daemon=True)
+    server_thread.start()
+    try:
+        while server_thread.is_alive():
+            server_thread.join(0.1)
+    except KeyboardInterrupt:
+        print('\nShutting down web server...')
+    finally:
+        cleaned = set()
+        for t in web_repl.tabs:
+            gwt = t.agent.ctx.get('gwt')
+            if gwt and hasattr(gwt, 'worktree') and (gwt.worktree not in cleaned):
+                cleaned.add(gwt.worktree)
+                try:
+                    cleanup_worktree(gwt)
+                except Exception:
+                    pass
+        import os
+        os._exit(0)

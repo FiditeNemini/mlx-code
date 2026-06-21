@@ -11,7 +11,7 @@ setup(
     author_email="albersj66@gmail.com",
     author="J Joe",
     license="Apache-2.0",
-    version="0.0.30",
+    version="0.0.32",
     readme="README.md",
     description="Coding Agent for Mac",
     long_description=open("README.md").read(),
@@ -21,17 +21,18 @@ setup(
         "mlx-lm>=0.31.3; platform_system=='Darwin'",
         "httpx",
         "pydantic",
-
-        "textual>=8.2.7",
-        "rich>=15.0.0",
-        "starlette",
-        "uvicorn",
     ],
-    extras_require={"all": [
-        "python-lsp-server[all]",
-        "GitPython", 
-        "pygments",
-    ]},
+    extras_require={
+        "all": [
+            "starlette",
+            "uvicorn",
+            "pygments",
+            "textual>=8.2.7",
+            "rich>=15.0.0",
+
+            "python-lsp-server[all]",
+        ],
+    },
     packages=find_packages(),
     entry_points={
         "console_scripts": [

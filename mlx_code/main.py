@@ -890,11 +890,14 @@ def _serve_cache(host, port, model, cache, system, tools, skips, *, fixed_port=F
                 raise
 
 def _serve_batch(host, port, model, cache_dir='.cache', *, fixed_port=False):
-    import uvicorn
-    from .bats import make_batch_app
+    try:
+        from .bats import make_batch_server
+    except ImportError:
+        print()
+        print('[warning] uvicorn/starlette not installed')
+        print('          Install server deps with:\x1b[31m pip install mlx-code[all] \x1b[0m')
+        return _serve_cache(host, port, model, cache_dir, None, None, None, fixed_port=fixed_port)
     import socket
-    import time
-    app = make_batch_app(model, cache_dir=cache_dir)
     while True:
         try:
             with socket.socket() as s:
@@ -909,24 +912,10 @@ def _serve_batch(host, port, model, cache_dir='.cache', *, fixed_port=False):
                 raise
         else:
             break
-    config = uvicorn.Config(app, host=host, port=port, loop='asyncio', log_level='warning')
-    uv_server = uvicorn.Server(config)
-    t = threading.Thread(target=uv_server.run, daemon=True)
-    t.start()
-    start_time = time.time()
-    notified = False
-    while True:
-        try:
-            with socket.create_connection((host, port), timeout=0.1):
-                break
-        except OSError:
-            if not notified and time.time() - start_time > 3.0:
-                logger.info('Waiting for batch server to start (model may be downloading)...')
-                notified = True
-            time.sleep(0.2)
+    server = make_batch_server(host, port, model, cache_dir=cache_dir)
     url = f'http://{host}:{port}'
     logger.debug(f'Batch server bound to {url}')
-    return (uv_server, url)
+    return (server, url)
 
 def main():
     parser = argparse.ArgumentParser(description='mlx-code MAIN')
@@ -967,28 +956,20 @@ def main():
         else:
             server, url = _serve_cache(host=args.host, port=port, model=args.model, cache=cache, system=None if args.leash in ('none', 'noapi') else args.system, tools=args.tools, skips=args.skips, fixed_port=fixed_port, gwt=gwt)
         if args.leash == 'none':
-            if args.engine == 'batch':
-                try:
-                    threading.Event().wait()
-                except KeyboardInterrupt:
-                    print('\nShutting down server...')
-            else:
-                try:
-                    server.serve_forever()
-                except KeyboardInterrupt:
-                    print('\nShutting down server...')
-                    server.server_close()
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                print('\nShutting down server...')
+                server.server_close()
         else:
-            if args.engine == 'cache':
-                threading.Thread(target=server.serve_forever, daemon=True).start()
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            while not getattr(server, 'started', True):
+                time.sleep(0.05)
             if args.leash == 'noapi':
-                if args.web:
-                    from .web import run_web
-                    web_port = args.web_port if args.web_port is not None else port + 80
-                    run_web(base_url=url, api=args.leash, repo=cwd, env=env, system=args.system, tool_names=args.tools, sdir=args.skill, init_prompt=args.prompt, resume=args.resume, stream=args.stream, host=args.host, port=web_port)
-                else:
-                    from .repl import run_repl
-                    run_repl(base_url=url, api=args.leash, repo=cwd, env=env, system=args.system, tool_names=args.tools, sdir=args.skill, init_prompt=args.prompt, resume=args.resume, stream=args.stream, bare=args.bare)
+                ui_mode = 'web' if args.web else 'bare' if args.bare else 'tui'
+                web_port = args.web_port if args.web_port is not None else port + 80
+                from .repl import run_repl
+                run_repl(base_url=url, api=args.leash, repo=cwd, env=env, system=args.system, tool_names=args.tools, sdir=args.skill, init_prompt=args.prompt, resume=args.resume, stream=args.stream, ui_mode=ui_mode, web_host=args.host, web_port=web_port)
             else:
                 env['GOOGLE_GEMINI_BASE_URL'] = url
                 env['GEMINI_API_KEY'] = 'mc'

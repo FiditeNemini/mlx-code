@@ -38,7 +38,7 @@ Agents:           ├───────────────────�
              │  │ Gemini         │  │ Edit    Bash   │  │
              │  │ Claude         │  │ Grep    Find   │  │
              │  │ Codex          │  │ Ls      Skill  │  │
-             │  │ DeepSeek       │  │ Agent ─────────┼──┼───► Recursively spawns sub-Agents
+             │  │ DeepSeek       │  │ Agent ────────────────► Recursively spawns sub-Agents
              │  └────────────────┘  └────────────────┘  │     
              │  Git worktree                            │
              │  (isolation + session state)             │
@@ -70,10 +70,10 @@ result = await agent.run('refactor utils.py to use dataclasses')
 
 ```bash
 # ephemeral run (no installation)
-uvx --from mlx-code mlc
+uvx --from mlx-code[all] mlc
 
 # or install into the current environment
-pip install mlx-code
+pip install mlx-code[all]
 
 # launch
 mlc                              # with a local MLX model

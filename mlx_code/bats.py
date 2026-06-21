@@ -294,6 +294,26 @@ def make_batch_app(model_name: str, cache_dir: str='.cache'):
             n_cached = sum((1 for _ in pc.cache_dir.glob('*.safetensors')))
         return JSONResponse({'status': 'ok', 'model': model_name, 'active_sequences': len(state['active']), 'prefix_cache_files': n_cached})
     return Starlette(routes=[Route('/v1/models', list_models, methods=['GET']), Route('/v1/messages/count_tokens', count_tokens, methods=['POST']), Route('/v1/chat/completions', generate_endpoint, methods=['POST']), Route('/v1/messages', generate_endpoint, methods=['POST']), Route('/v1/responses', generate_endpoint, methods=['POST']), Route('/v1beta/models/{rest:path}', generate_endpoint, methods=['POST']), Route('/generate', simple_generate, methods=['POST']), Route('/health', health, methods=['GET'])], lifespan=lifespan)
+
+class BatchServer:
+    import uvicorn
+
+    def __init__(self, app, host: str, port: int):
+        config = uvicorn.Config(app, host=host, port=port, loop='asyncio', log_level='warning')
+        self._server = uvicorn.Server(config)
+        self.host = host
+        self.port = port
+
+    def serve_forever(self):
+        self._server.run()
+
+    @property
+    def started(self) -> bool:
+        return self._server.started
+
+def make_batch_server(host: str, port: int, model, cache_dir: str='.cache') -> BatchServer:
+    app = make_batch_app(model, cache_dir=cache_dir)
+    return BatchServer(app, host, port)
 if __name__ == '__main__':
     import uvicorn
     uvicorn.run(make_batch_app('mlx-community/Qwen3.5-4B-OptiQ-4bit'), host='0.0.0.0', port=8000)

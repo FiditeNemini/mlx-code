@@ -9,7 +9,6 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 logger = logging.getLogger(__name__)
-_ADD_EXCLUDES = ['_*', '*.bin', '*.gguf', '*.safetensors', '*.pt', '*.pth', '.cache/', '.log.json', '*.egg-info/', '.eggs/', 'build/', 'dist/', '__pycache__/', '*.pyc', '*.pyo', '*.pyd', '.pytest_cache/', '.tox/', '.nox/', '.coverage', 'htmlcov/', '.venv/', 'venv/', 'env/', '.DS_Store', 'Thumbs.db']
 
 class GitError(RuntimeError):
     pass
@@ -57,11 +56,22 @@ def _count_user_turns(commit_body: str) -> int:
     if messages:
         return sum((1 for m in messages if m.get('role') == 'user'))
     return 0
+_ADD_EXCLUDES = ['_*', '_*/', '*.bin', '*.gguf', '*.safetensors', '*.pt', '*.pth', '.cache/', '.log.json', '*.egg-info/', '.eggs/', 'build/', 'dist/', '__pycache__/', '*.pyc', '*.pyo', '*.pyd', '.pytest_cache/', '.tox/', '.nox/', '.coverage', 'htmlcov/', '.venv/', 'venv/', 'env/', '.DS_Store', 'Thumbs.db']
+
+def _exclude_pathspecs(patterns: list[str]) -> list[str]:
+    specs = []
+    for p in patterns:
+        if p.endswith('/'):
+            name = p[:-1]
+            specs.append(f':(exclude,glob)**/{name}/**')
+        else:
+            specs.append(f':(exclude,glob)**/{p}')
+    return specs
 
 def git_add_filtered(cwd: str) -> None:
-    excludes = [f':(exclude){p}' for p in _ADD_EXCLUDES]
+    excludes = _exclude_pathspecs(_ADD_EXCLUDES)
     try:
-        _git(cwd, 'add', '-A', '--', '.', *excludes)
+        _git(cwd, '-c', 'advice.addIgnoredFile=false', 'add', '-A', '--', '.', *excludes)
     except GitError as e:
         logger.warning('git add warning (ignored): %s', e)
 
@@ -83,7 +93,7 @@ def create_worktree(repo_dir: str, *, worktree_dir: str | None=None, ref: str='H
             root = repo_dir
             gi = os.path.join(root, '.gitignore')
             if not os.path.exists(gi):
-                Path(gi).write_text('\n'.join(['_log.json']))
+                Path(gi).write_text('\n'.join(['.log.json']))
         if not _git(root, 'config', 'user.email', check=False):
             _git(root, 'config', 'user.email', 'agent@local')
         if not _git(root, 'config', 'user.name', check=False):
