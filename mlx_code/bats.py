@@ -9,6 +9,7 @@ from array import array
 from contextlib import asynccontextmanager
 from pathlib import Path
 import mlx.core as mx
+import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, JSONResponse
@@ -296,7 +297,6 @@ def make_batch_app(model_name: str, cache_dir: str='.cache'):
     return Starlette(routes=[Route('/v1/models', list_models, methods=['GET']), Route('/v1/messages/count_tokens', count_tokens, methods=['POST']), Route('/v1/chat/completions', generate_endpoint, methods=['POST']), Route('/v1/messages', generate_endpoint, methods=['POST']), Route('/v1/responses', generate_endpoint, methods=['POST']), Route('/v1beta/models/{rest:path}', generate_endpoint, methods=['POST']), Route('/generate', simple_generate, methods=['POST']), Route('/health', health, methods=['GET'])], lifespan=lifespan)
 
 class BatchServer:
-    import uvicorn
 
     def __init__(self, app, host: str, port: int):
         config = uvicorn.Config(app, host=host, port=port, loop='asyncio', log_level='warning')
@@ -315,5 +315,4 @@ def make_batch_server(host: str, port: int, model, cache_dir: str='.cache') -> B
     app = make_batch_app(model, cache_dir=cache_dir)
     return BatchServer(app, host, port)
 if __name__ == '__main__':
-    import uvicorn
     uvicorn.run(make_batch_app('mlx-community/Qwen3.5-4B-OptiQ-4bit'), host='0.0.0.0', port=8000)

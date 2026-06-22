@@ -70,7 +70,7 @@ result = await agent.run('refactor utils.py to use dataclasses')
 
 ```bash
 # ephemeral run (no installation)
-uvx --from mlx-code[all] mlc
+uvx --from "mlx-code[all]" mlc
 
 # or install into the current environment
 pip install mlx-code[all]
