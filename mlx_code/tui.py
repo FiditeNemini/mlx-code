@@ -147,6 +147,15 @@ class Tab(Vertical):
         self._cache_count: int = -1
         self._rendered_cache: Table | None = None
         self._tool_call_buf: str = ''
+        self._stream_dirty: bool = False
+
+    def on_mount(self) -> None:
+        self.set_interval(0.1, self._flush_stream)
+
+    def _flush_stream(self) -> None:
+        if self._stream_dirty:
+            self.refresh_stream()
+            self._stream_dirty = False
 
     @property
     def agent(self) -> Agent:
@@ -224,7 +233,7 @@ class Tab(Vertical):
                         self._stream_blocks[-1]['text'] += emit
                     else:
                         self._stream_blocks.append({'type': 'text', 'text': emit})
-            self.refresh_stream()
+            self._stream_dirty = True
         elif et == 'thinking_delta':
             delta = payload.get('delta', '')
             if delta:
@@ -232,7 +241,7 @@ class Tab(Vertical):
                     self._stream_blocks[-1]['text'] += delta
                 else:
                     self._stream_blocks.append({'type': 'thinking', 'text': delta})
-            self.refresh_stream()
+            self._stream_dirty = True
         elif et == 'tool_start':
             self.refresh_stream()
         elif et == 'tool_end':

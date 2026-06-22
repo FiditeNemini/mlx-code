@@ -31,6 +31,7 @@ logger = setup_logger('.log.json')
 generation_stream = mx.new_thread_local_stream(mx.default_device())
 gen_lock = threading.Lock()
 abort_ev = threading.Event()
+_EXPERIMENTAL = []
 
 @dataclass
 class ToolCall:
@@ -797,6 +798,13 @@ def stream_sse(format_type, seg_gen, msg_id, in_tokens, think_tags=None):
 
 def make_handler(model_name, cache_dir, system, names, skips, gwt=None, parse_think=True):
     model, tokenizer = mlx_lm.load(model_name)
+    if 'zmlx' in _EXPERIMENTAL:
+        try:
+            from zmlx.patch import patch
+            patch(model)
+            logger.info('zmlx enabled')
+        except:
+            logger.error('pip install "zmlx[lm]"')
     pc = PromptCache(model, model_name=model_name, cache_dir=cache_dir)
     if not isinstance(tokenizer, mlx_lm.tokenizer_utils.TokenizerWrapper):
         tokenizer = mlx_lm.tokenizer_utils.TokenizerWrapper(tokenizer)
@@ -936,8 +944,10 @@ def main():
     parser.add_argument('--bare', action='store_true', help='Use simple terminal REPL instead of TUI')
     parser.add_argument('--web', action='store_true', help='Use web UI instead of TUI')
     parser.add_argument('--web-port', type=int, default=None, help='Port for web UI (default: inference port + 80)')
+    parser.add_argument('--experimental', nargs='+', default=[], help='List of experimental features to enable')
     args, leash_args = parser.parse_known_args()
     logger.debug(f'args={args!r} leash_args={leash_args!r}')
+    _EXPERIMENTAL.extend(args.experimental)
     if args.engine == 'batch' and args.leash not in ('none', 'noapi'):
         parser.error('--engine batch only supports --leash none or --leash noapi for now')
     cache = os.path.abspath(args.cache)
